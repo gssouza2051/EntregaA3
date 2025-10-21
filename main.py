@@ -1,3 +1,25 @@
+"""
+Instalação e execução (Windows)
+-------------------------------
+1. Abrir terminal na pasta do projeto:
+   cd "EntregaA3"
+
+2. Criar e ativar venv:
+   - python -m venv .venv
+   - PowerShell: .\.venv\Scripts\Activate.ps1
+   - CMD: .venv\Scripts\activate
+
+3. Instalar dependências:
+    pip install -r requirements.txt
+   Ou manualmente:
+   python -m pip install --upgrade pip setuptools wheel
+   python -m pip install pygame scikit-fuzzy numpy
+
+4. Rodar:
+   python main.py
+"""
+
+
 import os
 # oculta a mensagem de boas-vindas do pygame
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"

@@ -28,12 +28,12 @@ Requisitos
 Instalação e execução (Windows)
 -------------------------------
 1. Abrir terminal na pasta do projeto:
-   cd "c:\Users\biel_\OneDrive\Documentos\FACULDADE\2025.2\IA\A3\EntregaA3"
+   cd "EntregaA3"
 
 2. Criar e ativar venv:
    - python -m venv .venv
    - PowerShell: .\.venv\Scripts\Activate.ps1
-   - CMD: .venv\Scripts\activate.bat
+   - CMD: .venv\Scripts\activate
 
 3. Instalar dependências:
    python -m pip install --upgrade pip setuptools wheel
