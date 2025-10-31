@@ -36,6 +36,18 @@ import sys
 import numpy as np
 import skfuzzy as fuzz
 from skfuzzy import control as ctrl
+import csv
+from pathlib import Path
+import time
+from reset_planilha import verificar_e_resetar_planilha
+
+# Chamar função para resetar planilha se desejado
+verificar_e_resetar_planilha()
+
+# métricas (arquivo)
+METRICS_FILE = Path("metrics.csv")
+cars_exited = 0
+total_spawned = 0
 
 # --- INICIALIZAÇÃO DO PYGAME ---
 pygame.init()
@@ -216,6 +228,7 @@ class Car(pygame.sprite.Sprite):
         self.rect = self.image.get_rect(topleft=(x, y))
         self.speed = 2
     def update(self, cars_group, traffic_light_v, traffic_light_h):
+        global cars_exited
         can_move = True
         # calcula deslocamento
         dx = (1 if self.direction == 'right' else -1 if self.direction == 'left' else 0) * self.speed
@@ -245,6 +258,8 @@ class Car(pygame.sprite.Sprite):
 
         # remove fora da tela
         if not screen.get_rect().colliderect(self.rect):
+            # conta como saída antes de remover
+            cars_exited += 1
             self.kill()
 
 # --- AGENTE INTELIGENTE (Sem alterações) ---
@@ -341,6 +356,7 @@ def car_is_waiting(car, all_cars, controller):
 
 # --- FUNÇÃO MAIN() - MODIFICADA ---
 def main():
+    global total_spawned
     light_v = TrafficLight(300, 150, 'vertical')
     light_h = TrafficLight(150, 300, 'horizontal')
     controller = TrafficLightController(light_v, light_h)
@@ -350,65 +366,98 @@ def main():
     horizontal_spawn_side = 'left'  # O próximo carro 'h' virá da esquerda
     vertical_spawn_side = 'top'    # O próximo carro 'v' virá de cima
 
-    while True:
-        # Loop de eventos para capturar pressionamento de teclas
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-            
-            # DETECÇÃO DE TECLAS PARA SPAWN MANUAL
-            if event.type == pygame.KEYDOWN:
-                # Pressionou 'h' para carro Horizontal
-                if event.key == pygame.K_h:
-                    if horizontal_spawn_side == 'left':
-                        all_cars.add(Car(-40, 370, 'right')) # Vem da esquerda
-                        horizontal_spawn_side = 'right'      # O próximo virá da direita
+    # logging CSV: cria arquivo e escreve header se necessário
+    write_header = not METRICS_FILE.exists()
+    metrics_f = open(METRICS_FILE, "a", newline="", encoding="utf-8")
+    metrics_writer = csv.writer(metrics_f)
+    if write_header:
+        metrics_writer.writerow(["timestamp", "sim_time_s", "cars_alive", "total_spawned", "cars_exited", "waiting_v", "waiting_h", "priority"])
+        metrics_f.flush()
+
+    sim_time = 0.0
+    LOG_INTERVAL = 1.0
+    last_log = 0.0
+
+    try:
+        while True:
+            # controla dt e tempo simulado (usado para logging)
+            dt_ms = clock.tick(FPS)
+            dt = dt_ms / 1000.0
+            sim_time += dt
+
+            # Loop de eventos para capturar pressionamento de teclas
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    raise KeyboardInterrupt
+                # DETECÇÃO DE TECLAS PARA SPAWN MANUAL
+                if event.type == pygame.KEYDOWN:
+                    # Pressionou 'h' para carro Horizontal
+                    if event.key == pygame.K_h:
+                        if horizontal_spawn_side == 'left':
+                            c = Car(-40, 370, 'right') # Vem da esquerda
+                            horizontal_spawn_side = 'right'
+                        else:
+                            c = Car(SCREEN_WIDTH, 410, 'left') # Vem da direita
+                            horizontal_spawn_side = 'left'
+                        all_cars.add(c)
+                        total_spawned += 1
+
+                    # Pressionou 'v' para carro Vertical
+                    if event.key == pygame.K_v:
+                        if vertical_spawn_side == 'top':
+                            c = Car(370, -40, 'down') # Vem de cima
+                            vertical_spawn_side = 'bottom'
+                        else:
+                            c = Car(410, SCREEN_HEIGHT, 'up') # Vem de baixo
+                            vertical_spawn_side = 'top'
+                        all_cars.add(c)
+                        total_spawned += 1
+
+            # --- PERCEPÇÃO DO AGENTE (SENSORES) ---
+            cars_waiting_v = 0
+            cars_waiting_h = 0
+            for car in all_cars:
+                if car_is_waiting(car, all_cars, controller):
+                    if car.direction in ('down', 'up'):
+                        cars_waiting_v += 1
                     else:
-                        all_cars.add(Car(SCREEN_WIDTH, 410, 'left')) # Vem da direita
-                        horizontal_spawn_side = 'left'               # O próximo virá da esquerda
-                
-                # Pressionou 'v' para carro Vertical
-                if event.key == pygame.K_v:
-                    if vertical_spawn_side == 'top':
-                        all_cars.add(Car(370, -40, 'down')) # Vem de cima
-                        vertical_spawn_side = 'bottom'     # O próximo virá de baixo
-                    else:
-                        all_cars.add(Car(410, SCREEN_HEIGHT, 'up')) # Vem de baixo
-                        vertical_spawn_side = 'top'                 # O próximo virá de cima
-        
-        # --- PERCEPÇÃO DO AGENTE (SENSORES) - CÓDIGO CORRIGIDO ---
-        cars_waiting_v = 0
-        cars_waiting_h = 0
-        for car in all_cars:
-            if car_is_waiting(car, all_cars, controller):
-                if car.direction in ('down', 'up'):
-                    cars_waiting_v += 1
-                else:
-                    cars_waiting_h += 1
-        
-        controller.update(cars_waiting_v, cars_waiting_h)
-        all_cars.update(all_cars, light_v, light_h)
+                        cars_waiting_h += 1
 
-        draw_environment()
-        all_cars.draw(screen)
-        light_v.draw()
-        light_h.draw()
-        controller.light_v.draw()
-        controller.light_h.draw()
-        
-        info_v = font.render(f"Carros esperando na Vertical: {cars_waiting_v}", True, COLOR_BLACK)
-        info_h = font.render(f"Carros esperando na Horizontal: {cars_waiting_h}", True, COLOR_BLACK)
-        priority_text = font.render(f"Prioridade de Troca (Fuzzy): {controller.last_priority_score:.2f}", True, COLOR_BLACK, COLOR_WHITE)
-        controls_text = font.render("Use 'H' para inserir carros na horizontal e 'V' para adicionar carros na vertical", True, COLOR_BLACK, COLOR_WHITE)
-        screen.blit(info_v, (10, 10))
-        screen.blit(info_h, (10, 35))
-        screen.blit(priority_text, (SCREEN_WIDTH // 2 - priority_text.get_width() // 2, 10))
-        screen.blit(controls_text, (SCREEN_WIDTH // 2 - controls_text.get_width() // 2, SCREEN_HEIGHT - 40))
+            controller.update(cars_waiting_v, cars_waiting_h)
+            all_cars.update(all_cars, light_v, light_h)
 
+            # desenho
+            draw_environment()
+            all_cars.draw(screen)
+            light_v.draw()
+            light_h.draw()
+            controller.light_v.draw()
+            controller.light_h.draw()
 
-        pygame.display.flip()
-        clock.tick(FPS)
+            info_v = font.render(f"Carros esperando na Vertical: {cars_waiting_v}", True, COLOR_BLACK)
+            info_h = font.render(f"Carros esperando na Horizontal: {cars_waiting_h}", True, COLOR_BLACK)
+            priority_text = font.render(f"Prioridade de Troca (Fuzzy): {controller.last_priority_score:.2f}", True, COLOR_BLACK, COLOR_WHITE)
+            controls_text = font.render("Use 'H' para inserir carros na horizontal e 'V' para adicionar carros na vertical", True, COLOR_BLACK, COLOR_WHITE)
+            screen.blit(info_v, (10, 10))
+            screen.blit(info_h, (10, 35))
+            screen.blit(priority_text, (SCREEN_WIDTH // 2 - priority_text.get_width() // 2, 10))
+            screen.blit(controls_text, (SCREEN_WIDTH // 2 - controls_text.get_width() // 2, SCREEN_HEIGHT - 40))
+
+            pygame.display.flip()
+
+            # grava métricas a cada LOG_INTERVAL segundos
+            if sim_time - last_log >= LOG_INTERVAL:
+                timestamp = time.time()
+                cars_alive = len(all_cars)
+                metrics_writer.writerow([timestamp, f"{sim_time:.2f}", cars_alive, total_spawned, cars_exited, cars_waiting_v, cars_waiting_h, f"{controller.last_priority_score:.2f}"])
+                metrics_f.flush()
+                last_log = sim_time
+
+    except KeyboardInterrupt:
+        # encerra limpo
+        metrics_f.close()
+        pygame.quit()
+        sys.exit()
 
 if __name__ == '__main__':
     main()

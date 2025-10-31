@@ -1,3 +1,6 @@
-numpy
+numpy==2.3.4
 scikit-fuzzy==0.4.2
-pygame
+pygame==2.6.1
+scikit-fuzzy==0.5.0
+streamlit==1.51.0
+pandas==2.3.3
