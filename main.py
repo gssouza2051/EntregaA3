@@ -107,13 +107,50 @@ class FuzzyController:
         self.simulador = ctrl.ControlSystemSimulation(self.sistema_controle)
 
     def compute_priority(self, num_carros_vermelha, tempo_verde):
+        """
+        Calcula prioridade (defuzzificada) e retorna também as ativações das regras.
+        Retorna: (prioridade_float, ativacoes_list)
+        ativacoes_list = [
+            (descricao_regra, grau_ativacao_float),
+            ...
+        ]
+        """
+        # prepara e executa simulação para obter valor defuzzificado
         self.simulador.input['carros_via_vermelha'] = num_carros_vermelha
         self.simulador.input['tempo_verde_atual'] = tempo_verde
         self.simulador.compute()
-        return self.simulador.output['prioridade_troca']
+        prioridade = self.simulador.output['prioridade_troca']
 
+        # agora calcula manualmente os graus de pertinência e a força de ativação de cada regra
+        # membros de 'carros_via_vermelha'
+        u_car = self.carros_via_vermelha.universe
+        p_poucos = fuzz.interp_membership(u_car, self.carros_via_vermelha['poucos'].mf, num_carros_vermelha)
+        p_medio  = fuzz.interp_membership(u_car, self.carros_via_vermelha['medio'].mf,  num_carros_vermelha)
+        p_muitos = fuzz.interp_membership(u_car, self.carros_via_vermelha['muitos'].mf, num_carros_vermelha)
 
-# --- CLASSES DA SIMULAÇÃO (Sem alterações) ---
+        # membros de 'tempo_verde_atual'
+        u_temp = self.tempo_verde_atual.universe
+        t_curto = fuzz.interp_membership(u_temp, self.tempo_verde_atual['curto'].mf, tempo_verde)
+        t_medio = fuzz.interp_membership(u_temp, self.tempo_verde_atual['medio'].mf, tempo_verde)
+        t_longo = fuzz.interp_membership(u_temp, self.tempo_verde_atual['longo'].mf, tempo_verde)
+
+        # regras (mesma lógica usada na construção)
+        r1 = np.fmin(p_muitos, t_longo)   # muitos E tempo longo -> alta
+        r2 = np.fmin(p_muitos, t_medio)   # muitos E tempo medio -> alta
+        r3 = p_medio                       # medio -> media
+        r4 = p_poucos                      # poucos -> baixa
+        r5 = t_curto                       # tempo curto -> baixa
+
+        ativacoes = [
+            ("Se há muitos carros na via vermelha E o tempo de verde atual é longo → prioridade ALTA", float(r1)),
+            ("Se há muitos carros na via vermelha E o tempo de verde atual é médio → prioridade ALTA", float(r2)),
+            ("Se há número médio de carros na via vermelha → prioridade MÉDIA", float(r3)),
+            ("Se há poucos carros na via vermelha → prioridade BAIXA", float(r4)),
+            ("Se o tempo de verde atual é curto → prioridade BAIXA", float(r5)),
+        ]
+
+        return float(prioridade), ativacoes
+# ...existing code...
 class TrafficLight:
     def __init__(self, x, y, orientation='vertical'):
         self.x, self.y, self.orientation = x, y, orientation
@@ -274,6 +311,11 @@ class TrafficLightController:
         self.change_sequence = None
         self.last_priority_score = 0
         self.YELLOW_TIME = 2 * FPS
+
+        # controle de frequência de impressão das ativações fuzzy
+        self._last_fuzzy_print_time = 0.0
+        self._fuzzy_print_interval = 1.5  # segundos
+
     def update(self, cars_v, cars_h):
         # incrementa timer (frames desde início do verde)
         self.timer += 1
@@ -291,12 +333,23 @@ class TrafficLightController:
                 self.timer = 0
             return
         
-        # calcula prioridade usando o cérebro fuzzy
+        # calcula prioridade usando o cérebro fuzzy (agora retorna também ativações)
         carros_na_vermelha = cars_v if self.light_h.state == 'green' else cars_h
         tempo_verde_segundos = self.timer / FPS
-        priority = self.fuzzy_brain.compute_priority(carros_na_vermelha, tempo_verde_segundos)
+        priority, ativacoes = self.fuzzy_brain.compute_priority(carros_na_vermelha, tempo_verde_segundos)
         self.last_priority_score = float(priority)
         
+        # imprime no terminal as ativações das regras no máximo a cada 1.5s
+        now = time.time()
+        should_print = (now - self._last_fuzzy_print_time >= self._fuzzy_print_interval) or (priority >= 5.0)
+        if should_print:
+            print(f"[FUZZY] prioridade(defuzz)={priority:.2f} | entradas: carros_vermelha={carros_na_vermelha}, tempo_verde={tempo_verde_segundos:.2f}s")
+            for desc, grau in ativacoes:
+                if grau > 0.01:  # imprime regras com algum grau de ativação
+                    print(f"  - {desc} -> grau={grau:.3f}")
+            print("-" * 60)
+            self._last_fuzzy_print_time = now
+
         # threshold reduzido para 5.0 (ajustável)
         if priority >= 5.0:
             if self.light_h.state == 'green':
@@ -306,12 +359,8 @@ class TrafficLightController:
                 self.light_v.state = 'yellow'
                 self.change_sequence = 'to_h'
             self.timer = 0
-        
-        # debug (remova ou comente depois)
-        # imprime quando prioridade elevada ou a cada 100 frames
-        if priority >= 5.0 or self.timer % (FPS * 5) == 0:
-            print(f"[DEBUG] red_wait={carros_na_vermelha} tempo_verde={tempo_verde_segundos:.1f}s prior={priority:.2f} estados(v={self.light_v.state}, h={self.light_h.state})")
 
+# ...existing code...
 def draw_environment():
     screen.fill(COLOR_GRAY)
     pygame.draw.rect(screen, COLOR_DARK_GRAY, (350, 0, 100, 800))
