@@ -1,122 +1,100 @@
-# Simulador de Semáforo com Spawn Manual
+# Simulador de Semáforo com Lógica Fuzzy — README (atualizado)
 
-Descrição
----------
-Simulador 2D (pygame) de um cruzamento controlado por um controlador Fuzzy (scikit-fuzzy). Dois eixos lógicos (vertical e horizontal) controlam semáforos visuais; carros podem ser spawnados manualmente nas duas direções.
+Resumo
+------
+Simulador 2D (pygame) de um cruzamento controlado por um controlador Fuzzy. Além do controle original por "prioridade de troca", o sistema agora possui uma segunda base fuzzy que recomenda o "Tempo do Semáforo" (segundos) a partir de variáveis ambientais (clima, fluxo de carros, fluxo de pedestres e horário). As variáveis ambientais mudam periodicamente e são exibidas na HUD.
 
-Como funciona (resumo)
-----------------------
-- Carros são sprites que se movem em linhas retas (up/down/left/right).  
-- O controlador Fuzzy (classe `FuzzyController`) recebe:
-  - número de carros esperando na via vermelha, e
-  - tempo atual do verde (em segundos).
-  - retorna uma "prioridade de troca" que o `TrafficLightController` usa para iniciar a sequência amarelo→troca.  
-- A detecção de carros "esperando" considera uma área de fila (constante `QUEUE_LENGTH`) e bloqueio por colisão com o carro da frente.  
-- Visual: ruas, faixas, semáforos e carros com desenho melhorado (classe `TrafficLight` e `Car`).
+O que são Variáveis Linguísticas (VLs)
+-------------------------------------
+Variáveis linguísticas representam grandezas numéricas por meio de termos qualitativos (ex.: "Baixo", "Médio", "Alto"). Cada termo tem uma Função de Pertinência (membership function) que indica o grau (0..1) com que um valor numérico pertence ao termo. A lógica fuzzy usa esses graus para avaliar regras IF–THEN em vez de decisões booleanas rígidas.
 
-Controles
----------
-- H: adiciona um carro na via horizontal (alternando esquerda/direita).  
-- V: adiciona um carro na via vertical (alternando cima/baixo).  
-- ESC / fechar janela: encerra.
+Entradas e Saídas do Sistema
+----------------------------
+- Entradas usadas pelo controlador de prioridade (legado/compatibilidade):
+  - carros_via_vermelha: número de carros esperando na via que está vermelha (0..10).
+  - tempo_verde_atual: tempo, em segundos, que o verde atual já está ativo (0..30).
+  - pedestres_esperando: (opcional) contagem de pedestres aguardando.
 
-Requisitos
-----------
-- Python 3.11 recomendado (algumas bibliotecas podem falhar em Python 3.12/3.13 devido a módulos legados).  
-- Dependências: pygame, scikit-fuzzy, numpy
+- Entradas novas (ambiente) usadas para recomendar tempo do semáforo:
+  - car_flow (label): "Baixo" / "Médio" / "Alto" — representando fluxo de carros.
+  - ped_flow (label): "Baixo" / "Médio" / "Alto" — fluxo de pedestres.
+  - horario (label derivado de HH:MM:SS): "Outro" / "Normal" / "Pico" (picos definidos).
+  - clima (label): "Ensolarado" / "Nublado" / "Chuvoso".
 
-Instalação e execução (Windows)
--------------------------------
-1. Abrir terminal na pasta do projeto:
-   cd "EntregaA3"
+- Saídas:
+  - prioridade_troca (0..10) — pontuação que aciona a sequência amarelo→troca quando >= limiar.
+  - tempo_semaforo (0..30 s) — tempo recomendado para manter o verde antes de iniciar troca.
 
-2. Criar e ativar venv:
-   - python -m venv .venv
-   - PowerShell: .\.venv\Scripts\Activate.ps1
-   - CMD: .venv\Scripts\activate
+Funções de Pertinência (Fuzzificação)
+------------------------------------
+Implementadas com `skfuzzy` (trimf/automf):
 
-3. Instalar dependências:
-   python -m pip install --upgrade pip setuptools wheel
-   python -m pip install pygame scikit-fuzzy numpy
+1. car_flow, ped_flow (Universo 0..10)
+   - Baixo  : trimf [0, 0, 4]
+   - Médio  : trimf [2, 5, 8]
+   - Alto   : trimf [6, 10, 10]
 
-4. Rodar:
-   python main.py
+2. horario (Universo 0..2)
+   - Outro  : trimf [0, 0, 1]
+   - Normal : trimf [0, 1, 2]
+   - Pico   : trimf [1, 2, 2]
+   - Observação: horários classificados como PICO quando hora em 06:30:00–08:00:00 ou 18:00:00–19:00:00.
 
-Observações e ajustes úteis
---------------------------
-- Parâmetros relevantes no código:
-  - STOP_* (zonas de parada), QUEUE_LENGTH (tamanho da fila visual),
-  - FPS, MIN_GREEN / MAX_GREEN (se presentes), PRIORITY_THRESHOLD (limiar de troca fuzzy).  
-  Ajuste esses valores conforme o comportamento observado.
+3. clima (Universo 0..2)
+   - Ensolarado: trimf [0, 0, 1]
+   - Nublado   : trimf [0, 1, 2]
+   - Chuvoso    : trimf [1, 2, 2]
 
-- Se aparecerem erros como "No module named 'imp'" ou "No module named 'distutils'", recomende-se recriar a venv usando Python 3.11.
+4. tempo_semaforo (Universo 0..30 segundos) — saída
+   - Baixo  : trimf [0, 0, 8]
+   - Médio  : trimf [6, 15, 22]
+   - Alto   : trimf [18, 30, 30]
 
-- Para remover a mensagem do pygame e warnings do pkg_resources, já estão aplicadas no topo do `main.py`:
-  - os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
-  - warnings.filterwarnings(...)
+5. prioridade_troca (legado) — universo 0..10, criado via automf como 'baixa/media/alta'.
 
-Arquitetura (rápido)
---------------------
-- main.py:
-  - Classes principais: `FuzzyController`, `TrafficLight`, `Car`, `TrafficLightController`.
-  - `main()` contém loop principal: eventos → percepção (contagem de filas) → update controlador → update sprites → desenho → tick.
+Base de Regras Fuzzy (Inferência)
+---------------------------------
+Regras implementadas (texto usado para prints de ativação):
 
-Contribuições / melhorias sugeridas
-----------------------------------
-- múltiplas faixas (lanes), curvas para left/right turns, tipos de veículo diferentes, chegada Poisson, semáforos para pedestres, UI para ajustar parâmetros em tempo real, gravação de métricas (CSV/plots).
+1) SE (Fluxo de Carros é Alto) E (Horário é Pico) ENTÃO (Tempo é Alto).  
+2) SE (Fluxo de Carros é Médio) E (Fluxo de Pedestres é Médio) E (Horário é Normal) ENTÃO (Tempo é Médio).  
+3) SE (Fluxo de Carros é Baixo) OU (Fluxo de Pedestres é Baixo) ENTÃO (Tempo é Baixo).  
+4) SE (Fluxo de Carros é Alto) E (Fluxo de Pedestres é Alto) E (Horário é Normal) ENTÃO (Tempo é Médio).  
+5) SE (Fluxo de Carros é Alto) E (Fluxo de Pedestres é Alto) E (Horário é Pico) ENTÃO (Tempo é Alto).  
+6) SE (Fluxo de Carros é Alto) E (Clima é Chuvoso) ENTÃO (Tempo é Alto).  
+7) SE Fluxo de Carros é Baixo E Fluxo de Pedestres é Baixo E Horário Outro ENTÃO Tempo Baixo.  
+8) SE Fluxo de Carros é Baixo E Fluxo de Pedestres é Alto ENTÃO Tempo Médio.  
+9) SE Fluxo de Carros é Médio E Horário é Outro ENTÃO Tempo Médio.
 
-Licença
--------
-Uso acadêmico / pessoal. Ajuste conforme necessário.
+- Implementação: as regras são montadas com objetos `ctrl.Rule` do scikit-fuzzy; para debug existe `evaluate_rules(...)` que calcula os graus de ativação de cada regra (usando interp_membership e min/max) e imprime no terminal quando o ambiente é avaliado.
 
-## Como a lógica Fuzzy atua neste simulador
+Defuzzificação
+--------------
+- Método: centroid (padrão do scikit-fuzzy `ControlSystemSimulation.compute()`).
+- Resultado: número real (ex.: `tempo_semaforo = 12.34`) que é usado como tempo recomendado em segundos. O TrafficLightController usa esse valor como critério adicional para iniciar a sequência de troca (se o verde atual exceder esse tempo).
 
-Resumo rápido
-- O controlador Fuzzy decide quando trocar qual via fica com o verde a partir de duas entradas:
-  1. número de carros esperando na via que está com sinal vermelho (carros_via_vermelha);
-  2. tempo que o verde atual já está ativo (tempo_verde_atual, em segundos).
-- A saída é uma pontuação contínua chamada `prioridade_troca` (valor numérico entre 0 e 10). Se essa prioridade ultrapassar um limiar (no código: 5.0) a troca é iniciada (verde → amarelo → troca).
+Comportamento Integrado
+-----------------------
+- O controlador combina duas decisões:
+  1. Prioridade de troca (método legado compute_priority() — heurística rápida compatível) → aciona troca quando >= limiar (ex.: 5.0).
+  2. Tempo recomendado pela base fuzzy ambiente → se o verde atual exceder esse tempo, inicia troca.
+- Pedestres: ao spawnar, é feita solicitação (request_ped_cross) que força a sequência amarelo→troca quando necessário; carros são bloqueados para não invadir faixas (várias proteções no update do sprite).
 
-Variáveis fuzzy (implementação)
-- carros_via_vermelha: antecedente com universo 0..10; usa automf para gerar termos linguísticos 'poucos', 'medio', 'muitos'.
-- tempo_verde_atual: antecedente com universo 0..20; definido com três funções triangulares:
-  - curto  ≈ [0, 0, 7]
-  - medio  ≈ [5, 10, 15]
-  - longo  ≈ [12, 20, 20]
-- prioridade_troca: consequente com universo 0..10; automf cria termos 'baixa', 'media', 'alta'.
+Logs e Diagnóstico
+------------------
+- Impressões no terminal:
+  - `[FUZZY-PRIOR]` — ativação da heurística de prioridade (componentes).
+  - `[FUZZY-TEMPO]` — tempo recomendado e regras (só imprime regras com grau > 0.01).
+- HUD: exibe clima, fluxo de carros, fluxo de pedestres e horário; alerta visual ao mudar ambiente.
 
-Regras fuzzy (resumidas)
-- Se há muitos carros na via vermelha E o tempo de verde atual é longo → prioridade ALTA.
-- Se há muitos carros na via vermelha E o tempo de verde atual é médio → prioridade ALTA.
-- Se há número médio de carros na via vermelha → prioridade MÉDIA.
-- Se há poucos carros na via vermelha → prioridade BAIXA.
-- Se o tempo de verde atual é curto → prioridade BAIXA.
+Ajustes Possíveis
+-----------------
+- Universos, parâmetros das trimf e limites (por exemplo universo de `car_flow`) podem ser calibrados para comportamento desejado.
+- Limiar de troca (atualmente 5.0) e duração do amarelo (YELLOW_TIME) ajustáveis.
+- Pode-se substituir `compute_priority` heurística por um subsistema fuzzy dedicado caso deseje unificar decisões.
 
-Processo de inferência
-1. Fuzzificação: converte os valores numéricos de entrada nas pertinências (graus) das funções de pertinência.
-2. Avaliação de regras: cada regra combina suas condições (AND usa operação mínima) e produz um conjunto fuzzy de saída parcial.
-3. Agregação: as saídas parciais das regras são combinadas em uma única função fuzzy para `prioridade_troca`.
-4. Defuzzificação: a função agregada é convertida em um número (método padrão: centroid), produzindo a pontuação final de prioridade (valor contínuo).
+Execução
+--------
+1. Criar/ativar venv e instalar dependências: pygame, scikit-fuzzy, numpy.  
+2. Rodar: `python main.py`  
 
-Como isso influencia o comportamento do semáforo
-- O `TrafficLightController` consulta o FuzzyController a cada atualização, passando:
-  - `carros_na_vermelha` (contagem de carros que estão "na fila" com semáforo vermelho),
-  - `tempo_verde_segundos` (tempo desde que o verde foi acionado).
-- Se a prioridade retornada ≥ 5.0, inicia-se a sequência para trocar (o semáforo atual vai para amarelo; após YELLOW_TIME ocorre a troca de verde).
-- Isso evita trocas imediatas e favorece a via que está acumulando espera, equilibrando tempo de serviço e tempo de espera.
-
-Parâmetros relevantes no código
-- Limiar de troca: 5.0 (em TrafficLightController.update).
-- Duração do amarelo: YELLOW_TIME = 2 * FPS (no código; ajustável).
-- Universos e funções de pertinência estão em `FuzzyController.__init__` (use automf e trimf conforme necessidade).
-
-Dicas para ajuste e experimentação
-- A sensibilidade do sistema muda alterando:
-  - os universos/funções de pertinência (ex.: aumentar alcance de 'muitos');
-  - as regras (ex.: penalizar muito tempo de verde mesmo com poucos carros);
-  - o limiar de troca (5.0) para tornar o sistema mais conservador ou agressivo.
-- Teste com diferentes FPS / LOG_INTERVAL para ver impacto no logging e na resposta do controlador.
-- A pontuação `last_priority_score` é registrada e exibida durante a simulação e também é gravada em `metrics.csv` para análise posterior.
-
-Exemplo prático
-- Se a via vertical acumula 6 carros enquanto a horizontal já ficou com verde por 12 s, muitas regras irão disparar e a prioridade tende a alto → o controlador irá colocar o semáforo da horizontal em amarelo e depois trocar para vertical.

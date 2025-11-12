@@ -39,10 +39,11 @@ from skfuzzy import control as ctrl
 import csv
 from pathlib import Path
 import time
-from reset_planilha import verificar_e_resetar_planilha
+import textwrap
+#from reset_planilha import verificar_e_resetar_planilha
 
 # Chamar função para resetar planilha se desejado
-verificar_e_resetar_planilha()
+#verificar_e_resetar_planilha()
 
 # métricas (arquivo)
 METRICS_FILE = Path("metrics.csv")
@@ -56,7 +57,7 @@ pygame.init()
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 800
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("Simulador de Semáforo com Spawn Manual")
+pygame.display.set_caption("Simulador de Semáforo com Lógica Fuzzy")
 
 # Cores e Fonte
 COLOR_WHITE = (255, 255, 255)
@@ -82,82 +83,282 @@ STOP_LEFT_MIN, STOP_LEFT_MAX = 440, 480   # vindo da direita (rect.left)
 QUEUE_LENGTH = 160
 
 # Constantes das faixas (reutilizadas pelo spawn dos pedestres)
-CW_THICKNESS = 14
+CW_THICKNESS = 22
 CW_GAP = 12
+
+# limites das vias (usados por desenho e lógica para detectar faixas)
+ROAD_X0, ROAD_X1 = 350, 450
+ROAD_Y0, ROAD_Y1 = 350, 450
 
 # flags globais para bloquear tráfego quando pedestres estão atravessando
 PED_BLOCK_V = 0  # pedestres atravessando a via vertical (impactam tráfego vertical)
 PED_BLOCK_H = 0  # pedestres atravessando a via horizontal (impactam tráfego horizontal)
 
+# --- Variáveis ambientais randômicas (clima / fluxo / horário) ---
+CLIMATES = ["Ensolarado", "Chuvoso", "Nublado"]
+FLOW_LEVELS = ["Baixo", "Médio", "Alto"]
+
+# mapeamento de níveis para multiplicadores de spawn (valores base serão multiplicados)
+CAR_FLOW_MULT = {"Baixo": 0.25, "Médio": 0.6, "Alto": 1.3}
+PED_FLOW_MULT = {"Baixo": 0.25, "Médio": 0.6, "Alto": 1.3}
+
+import datetime
+
+def generate_random_environment():
+    """Gera um dicionário com clima, fluxo de carros, fluxo de pedestres e horário aleatório.
+    Se a hora cair em período de pico (06:30-08:00 ou 18:00-19:00) força car_flow = 'Alto'.
+    """
+    clima = random.choice(CLIMATES)
+    # horário aleatório do dia
+    seconds = random.randint(0, 24*3600 - 1)
+    hora_dt = (datetime.datetime.min + datetime.timedelta(seconds=seconds)).time()
+    hora = hora_dt.strftime("%H:%M:%S")
+
+    # escolha inicial com pesos para ter mais probabilidade de Médio
+    carro_flow = random.choices(FLOW_LEVELS, weights=[1, 3, 2], k=1)[0]
+    ped_flow = random.choices(FLOW_LEVELS, weights=[2, 3, 1], k=1)[0]
+
+    # se estiver em horário de pico, força fluxo de carros Alto
+    pico_manha_start = datetime.time(6, 30, 0)
+    pico_manha_end   = datetime.time(8, 0, 0)
+    pico_tarde_start = datetime.time(18, 0, 0)
+    pico_tarde_end   = datetime.time(19, 0, 0)
+    if (pico_manha_start <= hora_dt <= pico_manha_end) or (pico_tarde_start <= hora_dt <= pico_tarde_end):
+        carro_flow = "Alto"
+
+    return {"clima": clima, "car_flow": carro_flow, "ped_flow": ped_flow, "hora": hora}
+
 # --- CÉREBRO FUZZY (Sem alterações) ---
 
 class FuzzyController:
-    """Encapsula toda a configuração e computação da Lógica Fuzzy."""
+    """
+    FuzzyController estendido com variáveis linguísticas:
+     - fluxo de carros (Baixo/Médio/Alto)
+     - fluxo de pedestres (Baixo/Médio/Alto)
+     - horário (Outro/Normal/Pico)  -- mapeado a partir de hora HH:MM:SS
+     - clima (Ensolarado/Nublado/Chuvoso)
+    Saída: tempo_recomendado (0..30s) para o semáforo.
+    """
     def __init__(self):
-        self.carros_via_vermelha = ctrl.Antecedent(np.arange(0, 11, 1), 'carros_via_vermelha')
-        self.tempo_verde_atual = ctrl.Antecedent(np.arange(0, 21, 1), 'tempo_verde_atual')
-        self.prioridade_troca = ctrl.Consequent(np.arange(0, 11, 1), 'prioridade_troca')
+        # entradas
+        self.car_flow = ctrl.Antecedent(np.arange(0, 11, 1), 'car_flow')      # 0..10
+        self.ped_flow = ctrl.Antecedent(np.arange(0, 11, 1), 'ped_flow')      # 0..10
+        self.horario = ctrl.Antecedent(np.arange(0, 3, 1), 'horario')        # 0:Outro,1:Normal,2:Pico
+        self.clima = ctrl.Antecedent(np.arange(0, 3, 1), 'clima')            # 0:Ensolarado,1:Nublado,2:Chuvoso
 
-        self.carros_via_vermelha.automf(names=['poucos', 'medio', 'muitos'])
-        self.tempo_verde_atual['curto'] = fuzz.trimf(self.tempo_verde_atual.universe, [0, 0, 7])
-        self.tempo_verde_atual['medio'] = fuzz.trimf(self.tempo_verde_atual.universe, [5, 10, 15])
-        self.tempo_verde_atual['longo'] = fuzz.trimf(self.tempo_verde_atual.universe, [12, 20, 20])
-        self.prioridade_troca.automf(names=['baixa', 'media', 'alta'])
+        # saída
+        self.tempo_semaforo = ctrl.Consequent(np.arange(0, 31, 1), 'tempo_semaforo')  # 0..30 segundos
 
-        regra1 = ctrl.Rule(self.carros_via_vermelha['muitos'] & self.tempo_verde_atual['longo'], self.prioridade_troca['alta'])
-        regra2 = ctrl.Rule(self.carros_via_vermelha['muitos'] & self.tempo_verde_atual['medio'], self.prioridade_troca['alta'])
-        regra3 = ctrl.Rule(self.carros_via_vermelha['medio'], self.prioridade_troca['media'])
-        regra4 = ctrl.Rule(self.carros_via_vermelha['poucos'], self.prioridade_troca['baixa'])
-        regra5 = ctrl.Rule(self.tempo_verde_atual['curto'], self.prioridade_troca['baixa'])
-        
-        self.sistema_controle = ctrl.ControlSystem([regra1, regra2, regra3, regra4, regra5])
-        self.simulador = ctrl.ControlSystemSimulation(self.sistema_controle)
+        # memberships - fluxo carros / pedestres (Baixo/Médio/Alto)
+        self.car_flow['Baixo']  = fuzz.trimf(self.car_flow.universe, [0, 0, 4])
+        self.car_flow['Médio']  = fuzz.trimf(self.car_flow.universe, [2, 5, 8])
+        self.car_flow['Alto']   = fuzz.trimf(self.car_flow.universe, [6, 10, 10])
 
-    def compute_priority(self, num_carros_vermelha, tempo_verde):
-        """
-        Calcula prioridade (defuzzificada) e retorna também as ativações das regras.
-        Retorna: (prioridade_float, ativacoes_list)
-        ativacoes_list = [
-            (descricao_regra, grau_ativacao_float),
-            ...
+        self.ped_flow['Baixo']  = fuzz.trimf(self.ped_flow.universe, [0, 0, 4])
+        self.ped_flow['Médio']  = fuzz.trimf(self.ped_flow.universe, [2, 5, 8])
+        self.ped_flow['Alto']   = fuzz.trimf(self.ped_flow.universe, [6, 10, 10])
+
+        # horario categórico: 0 Outro, 1 Normal, 2 Pico
+        self.horario['Outro'] = fuzz.trimf(self.horario.universe, [0, 0, 1])
+        self.horario['Normal'] = fuzz.trimf(self.horario.universe, [0, 1, 2])
+        self.horario['Pico'] = fuzz.trimf(self.horario.universe, [1, 2, 2])
+
+        # clima: 0 Ensolarado, 1 Nublado, 2 Chuvoso
+        self.clima['Ensolarado'] = fuzz.trimf(self.clima.universe, [0, 0, 1])
+        self.clima['Nublado']    = fuzz.trimf(self.clima.universe, [0, 1, 2])
+        self.clima['Chuvoso']    = fuzz.trimf(self.clima.universe, [1, 2, 2])
+
+        # saída tempo do semáforo (Baixo / Médio / Alto)
+        self.tempo_semaforo['Baixo'] = fuzz.trimf(self.tempo_semaforo.universe, [0, 0, 8])
+        self.tempo_semaforo['Médio'] = fuzz.trimf(self.tempo_semaforo.universe, [6, 15, 22])
+        self.tempo_semaforo['Alto']  = fuzz.trimf(self.tempo_semaforo.universe, [18, 30, 30])
+
+        # --- Regras solicitadas (implementadas aqui) ---
+        rules = []
+
+        # 1. SE (Fluxo de Carros é Alto) E (Horário é Pico) ENTÃO (Tempo é Alto).
+        rules.append(ctrl.Rule(self.car_flow['Alto'] & self.horario['Pico'], self.tempo_semaforo['Alto']))
+
+        # 2. SE (Fluxo de Carros é Médio) E (Fluxo de Pedestres é Médio) E (Horário é Normal) ENTÃO (Tempo é Médio).
+        rules.append(ctrl.Rule(self.car_flow['Médio'] & self.ped_flow['Médio'] & self.horario['Normal'], self.tempo_semaforo['Médio']))
+
+        # 3. SE (Fluxo de Carros é Baixo) OU (Fluxo de Pedestres é Baixo) ENTÃO (Tempo é Baixo).
+        rules.append(ctrl.Rule(self.car_flow['Baixo'] | self.ped_flow['Baixo'], self.tempo_semaforo['Baixo']))
+
+        # 4. SE (Fluxo de Carros é Alto) E (Fluxo de Pedestres é Alto) E (Horário é Normal) ENTÃO (Tempo é Médio).
+        rules.append(ctrl.Rule(self.car_flow['Alto'] & self.ped_flow['Alto'] & self.horario['Normal'], self.tempo_semaforo['Médio']))
+
+        # 5. SE (Fluxo de Carros é Alto) E (Fluxo de Pedestres é Alto) E (Horário é Pico) ENTÃO (Tempo é Alto).
+        rules.append(ctrl.Rule(self.car_flow['Alto'] & self.ped_flow['Alto'] & self.horario['Pico'], self.tempo_semaforo['Alto']))
+
+        # 6. SE (Fluxo de Carros é Alto) E (Clima é Chuvoso) ENTÃO (Tempo é Alto).
+        rules.append(ctrl.Rule(self.car_flow['Alto'] & self.clima['Chuvoso'], self.tempo_semaforo['Alto']))
+
+        # Regras adicionais conforme especificado:
+        # - SE Fluxo de Carros é Baixo E Fluxo de Pedestres é Baixo E Horário Outro ENTÃO Tempo Baixo.
+        rules.append(ctrl.Rule(self.car_flow['Baixo'] & self.ped_flow['Baixo'] & self.horario['Outro'], self.tempo_semaforo['Baixo']))
+
+        # - SE Fluxo de Carros é Baixo E Fluxo de Pedestres é Alto ENTÃO Tempo Médio.
+        rules.append(ctrl.Rule(self.car_flow['Baixo'] & self.ped_flow['Alto'], self.tempo_semaforo['Médio']))
+
+        # - SE Fluxo de Carros é Médio E Horário é Outro ENTÃO Tempo Médio.
+        rules.append(ctrl.Rule(self.car_flow['Médio'] & self.horario['Outro'], self.tempo_semaforo['Médio']))
+
+        # monta sistema
+        self.sistema = ctrl.ControlSystem(rules)
+        self.sim = ctrl.ControlSystemSimulation(self.sistema)
+
+        # armazenar descrições das regras na mesma ordem (para impressão)
+        self.rules_descriptions = [
+            "1) SE (Fluxo de Carros é Alto) E (Horário é de Pico) ENTÃO (Tempo é Alto).",
+            "2) SE (Fluxo de Carros é Médio) E (Fluxo de Pedestres é Médio) E (Horário é Normal) ENTÃO (Tempo é Médio).",
+            "3) SE (Fluxo de Carros é Baixo) OU (Fluxo de Pedestres é Baixo) ENTÃO (Tempo é Baixo).",
+            "4) SE (Fluxo de Carros é Alto) E (Fluxo de Pedestres é Alto) E (Horário é Normal) ENTÃO (Tempo é Médio).",
+            "5) SE (Fluxo de Carros é Alto) E (Fluxo de Pedestres é Alto) E (Horário é de Pico) ENTÃO (Tempo é Alto).",
+            "6) SE (Fluxo de Carros é Alto) E (Clima é Chuvoso) ENTÃO (Tempo é Alto).",
+            "7) SE Fluxo de Carros é Baixo E Fluxo de Pedestres é Baixo E Horário Outro ENTÃO Tempo Baixo.",
+            "8) SE Fluxo de Carros é Baixo E Fluxo de Pedestres é Alto ENTÃO Tempo Médio.",
+            "9) SE Fluxo de Carros é Médio E Horário é Outro ENTÃO Tempo Médio."
         ]
+
+    # mapeamentos auxiliares de rótulos para valores numéricos usados na entrada fuzzy
+    @staticmethod
+    def map_flow_label_to_value(label):
+        return {'Baixo': 2.0, 'Médio': 5.0, 'Alto': 9.0}.get(label, 5.0)
+
+    @staticmethod
+    def map_clima_label_to_value(label):
+        return {'Ensolarado': 0.0, 'Nublado': 1.0, 'Chuvoso': 2.0}.get(label, 1.0)
+
+    @staticmethod
+    def map_hora_label_to_value(hora_str):
+        # hora_str "HH:MM:SS"
+        try:
+            h = int(hora_str.split(":")[0])
+        except Exception:
+            return 1.0
+        # pico: 07-09 e 17-19
+        if 7 <= h <= 9 or 17 <= h <= 19:
+            return 2.0  # Pico
+        # normal: 10-16
+        if 10 <= h <= 16:
+            return 1.0  # Normal
+        return 0.0      # Outro
+
+    def compute_tempo_from_env(self, car_flow_label, ped_flow_label, hora_str, clima_label):
         """
-        # prepara e executa simulação para obter valor defuzzificado
-        self.simulador.input['carros_via_vermelha'] = num_carros_vermelha
-        self.simulador.input['tempo_verde_atual'] = tempo_verde
-        self.simulador.compute()
-        prioridade = self.simulador.output['prioridade_troca']
+        Recebe labels do ambiente (strings) e retorna tempo_recomendado (float segundos).
+        Implementação mais resiliente: usa uma simulação local e tenta recuperar a saída
+        mesmo que a chave não exista exatamente como 'tempo_semaforo'.
+        """
+        cf = self.map_flow_label_to_value(car_flow_label)
+        pf = self.map_flow_label_to_value(ped_flow_label)
+        hr = self.map_hora_label_to_value(hora_str)
+        cl = self.map_clima_label_to_value(clima_label)
 
-        # agora calcula manualmente os graus de pertinência e a força de ativação de cada regra
-        # membros de 'carros_via_vermelha'
-        u_car = self.carros_via_vermelha.universe
-        p_poucos = fuzz.interp_membership(u_car, self.carros_via_vermelha['poucos'].mf, num_carros_vermelha)
-        p_medio  = fuzz.interp_membership(u_car, self.carros_via_vermelha['medio'].mf,  num_carros_vermelha)
-        p_muitos = fuzz.interp_membership(u_car, self.carros_via_vermelha['muitos'].mf, num_carros_vermelha)
+        try:
+            # cria uma simulação local para evitar estado/resíduos entre chamadas
+            sim_local = ctrl.ControlSystemSimulation(self.sistema)
+            sim_local.input['car_flow'] = float(cf)
+            sim_local.input['ped_flow'] = float(pf)
+            sim_local.input['horario'] = float(hr)
+            sim_local.input['clima'] = float(cl)
 
-        # membros de 'tempo_verde_atual'
-        u_temp = self.tempo_verde_atual.universe
-        t_curto = fuzz.interp_membership(u_temp, self.tempo_verde_atual['curto'].mf, tempo_verde)
-        t_medio = fuzz.interp_membership(u_temp, self.tempo_verde_atual['medio'].mf, tempo_verde)
-        t_longo = fuzz.interp_membership(u_temp, self.tempo_verde_atual['longo'].mf, tempo_verde)
+            sim_local.compute()
 
-        # regras (mesma lógica usada na construção)
-        r1 = np.fmin(p_muitos, t_longo)   # muitos E tempo longo -> alta
-        r2 = np.fmin(p_muitos, t_medio)   # muitos E tempo medio -> alta
-        r3 = p_medio                       # medio -> media
-        r4 = p_poucos                      # poucos -> baixa
-        r5 = t_curto                       # tempo curto -> baixa
+            # tenta acessar pelo nome esperado; se não existir, pega o primeiro valor disponível
+            if isinstance(sim_local.output, dict) and 'tempo_semaforo' in sim_local.output:
+                tempo = float(sim_local.output['tempo_semaforo'])
+            elif isinstance(sim_local.output, dict) and len(sim_local.output) > 0:
+                tempo = float(next(iter(sim_local.output.values())))
+            else:
+                # fallback seguro
+                tempo = 12.0
+        except Exception as e:
+            print("Erro compute_tempo_from_env:", e)
+            tempo = 12.0
+
+        return tempo
+
+    def compute_priority(self, num_carros_vermelha, tempo_verde, num_pedestres_esperando=0):
+        """
+        Método compatível usado pelo TrafficLightController.
+        Retorna: (prioridade_float [0..10], ativacoes_list).
+        Implementação heurística simples para manter compatibilidade com a lógica existente.
+        """
+        # normaliza entradas (assume carros até 10, tempo até 30s, pedestres até 6)
+        c = max(0.0, min(10.0, float(num_carros_vermelha)))
+        t = max(0.0, min(30.0, float(tempo_verde)))
+        p = max(0.0, min(6.0, float(num_pedestres_esperando)))
+
+        # heurística: combina componentes (pesos ajustáveis)
+        w_c, w_t, w_p = 0.6, 0.2, 0.2
+        prioridade_norm = w_c * (c / 10.0) + w_t * (t / 30.0) + w_p * (p / 6.0)
+        prioridade = float(max(0.0, min(10.0, prioridade_norm * 10.0)))
 
         ativacoes = [
-            ("Se há muitos carros na via vermelha E o tempo de verde atual é longo → prioridade ALTA", float(r1)),
-            ("Se há muitos carros na via vermelha E o tempo de verde atual é médio → prioridade ALTA", float(r2)),
-            ("Se há número médio de carros na via vermelha → prioridade MÉDIA", float(r3)),
-            ("Se há poucos carros na via vermelha → prioridade BAIXA", float(r4)),
-            ("Se o tempo de verde atual é curto → prioridade BAIXA", float(r5)),
+            ("car_component", float(w_c * (c / 10.0))),
+            ("time_component", float(w_t * (t / 30.0))),
+            ("ped_component", float(w_p * (p / 6.0))),
         ]
+        return prioridade, ativacoes
 
-        return float(prioridade), ativacoes
-# ...existing code...
+    def evaluate_rules(self, car_flow_label, ped_flow_label, hora_str, clima_label):
+        """
+        Retorna lista de (descricao_regra, grau_ativacao) para as regras implementadas.
+        Usa interp_membership nas MF definidas e combina com min/max conforme AND/OR.
+        """
+        cf = self.map_flow_label_to_value(car_flow_label)
+        pf = self.map_flow_label_to_value(ped_flow_label)
+        hr = self.map_hora_label_to_value(hora_str)
+        cl = self.map_clima_label_to_value(clima_label)
+
+        u_car = self.car_flow.universe
+        u_ped = self.ped_flow.universe
+        u_hor = self.horario.universe
+        u_cli = self.clima.universe
+
+        # memberships carros
+        car_baixo = fuzz.interp_membership(u_car, self.car_flow['Baixo'].mf, cf)
+        car_medio = fuzz.interp_membership(u_car, self.car_flow['Médio'].mf, cf)
+        car_alto  = fuzz.interp_membership(u_car, self.car_flow['Alto'].mf, cf)
+        # pedestres
+        ped_baixo = fuzz.interp_membership(u_ped, self.ped_flow['Baixo'].mf, pf)
+        ped_medio = fuzz.interp_membership(u_ped, self.ped_flow['Médio'].mf, pf)
+        ped_alto  = fuzz.interp_membership(u_ped, self.ped_flow['Alto'].mf, pf)
+        # horario
+        hor_outro  = fuzz.interp_membership(u_hor, self.horario['Outro'].mf, hr)
+        hor_normal = fuzz.interp_membership(u_hor, self.horario['Normal'].mf, hr)
+        hor_pico   = fuzz.interp_membership(u_hor, self.horario['Pico'].mf, hr)
+        # clima
+        cli_ensol = fuzz.interp_membership(u_cli, self.clima['Ensolarado'].mf, cl)
+        cli_nub   = fuzz.interp_membership(u_cli, self.clima['Nublado'].mf, cl)
+        cli_chuv  = fuzz.interp_membership(u_cli, self.clima['Chuvoso'].mf, cl)
+
+        # calcula graus conforme regras definidas (mesma ordem das descrições)
+        graus = []
+        # 1
+        graus.append( float(np.fmin(car_alto, hor_pico)) )
+        # 2
+        graus.append( float(np.fmin(np.fmin(car_medio, ped_medio), hor_normal)) )
+        # 3
+        graus.append( float(np.fmax(car_baixo, ped_baixo)) )
+        # 4
+        graus.append( float(np.fmin(np.fmin(car_alto, ped_alto), hor_normal)) )
+        # 5
+        graus.append( float(np.fmin(np.fmin(car_alto, ped_alto), hor_pico)) )
+        # 6
+        graus.append( float(np.fmin(car_alto, cli_chuv)) )
+        # 7
+        graus.append( float(np.fmin(np.fmin(car_baixo, ped_baixo), hor_outro)) )
+        # 8
+        graus.append( float(np.fmin(car_baixo, ped_alto)) )
+        # 9
+        graus.append( float(np.fmin(car_medio, hor_outro)) )
+
+        ativacoes = list(zip(self.rules_descriptions, graus))
+        return ativacoes
+
 class TrafficLight:
     def __init__(self, x, y, orientation='vertical'):
         self.x, self.y, self.orientation = x, y, orientation
@@ -468,11 +669,16 @@ class TrafficLightController:
                 self.change_sequence = 'to_h'
                 self.timer = 0
 
-    def update(self, cars_v, cars_h):
+    def update(self, cars_v, cars_h, env=None, ped_waiting_total=0):
+        """
+        Atualiza semáforos.
+        Agora aceita 'env' (dicionário gerado por generate_random_environment) para cálculo
+        do tempo recomendado via lógica fuzzy estendida.
+        """
         # incrementa timer (frames desde início do verde)
         self.timer += 1
-        
-        # se estiver na sequência de amarelo espera terminar antes de trocar
+
+        # comportamento anterior mantido: tratamento de change_sequence/amarelo
         if self.change_sequence:
             if self.timer > self.YELLOW_TIME:
                 if self.change_sequence == 'to_v':
@@ -484,25 +690,51 @@ class TrafficLightController:
                 self.change_sequence = None
                 self.timer = 0
             return
-        
-        # calcula prioridade usando o cérebro fuzzy (agora retorna também ativações)
+
+        # calcula prioridade original (mantendo compatibilidade)
         carros_na_vermelha = cars_v if self.light_h.state == 'green' else cars_h
         tempo_verde_segundos = self.timer / FPS
         priority, ativacoes = self.fuzzy_brain.compute_priority(carros_na_vermelha, tempo_verde_segundos)
         self.last_priority_score = float(priority)
-        
-        # imprime no terminal as ativações das regras no máximo a cada 1.5s
+
+        # imprime ativações conforme antes
         now = time.time()
         should_print = (now - self._last_fuzzy_print_time >= self._fuzzy_print_interval) or (priority >= 5.0)
         if should_print:
-            print(f"[FUZZY] prioridade(defuzz)={priority:.2f} | entradas: carros_vermelha={carros_na_vermelha}, tempo_verde={tempo_verde_segundos:.2f}s")
+            print(f"[FUZZY-PRIOR] prioridade(defuzz)={priority:.2f} | entradas: carros_vermelha={carros_na_vermelha}, tempo_verde={tempo_verde_segundos:.2f}s, ped_esperando={ped_waiting_total}")
             for desc, grau in ativacoes:
-                if grau > 0.01:  # imprime regras com algum grau de ativação
+                if grau > 0.01:
+                    print(f"  - {desc} -> grau={grau:.3f}")
+            print("-" * 40)
+            self._last_fuzzy_print_time = now
+
+        # --- Cálculo do tempo recomendado a partir do ambiente (se fornecido) ---
+        tempo_recomendado = None
+        regra_ativacoes = None
+        if env is not None:
+            try:
+                tempo_recomendado = self.fuzzy_brain.compute_tempo_from_env(env['car_flow'], env['ped_flow'], env['hora'], env['clima'])
+                # guarda para exibição/debug
+                self.last_tempo_recomendado = float(tempo_recomendado)
+                # avalia regras e obtém graus
+                regra_ativacoes = self.fuzzy_brain.evaluate_rules(env['car_flow'], env['ped_flow'], env['hora'], env['clima'])
+            except Exception as e:
+                # não deve quebrar o loop de simulação
+                print("Erro compute_tempo_from_env:", e)
+                tempo_recomendado = None
+
+        # imprime regras fuzzy do cálculo de tempo quando houver env (com throttle igual)
+        now = time.time()
+        if regra_ativacoes is not None and (now - self._last_fuzzy_print_time >= self._fuzzy_print_interval):
+            print(f"[FUZZY-TEMPO] tempo_recomendado={tempo_recomendado:.2f}s | env: clima={env['clima']}, car_flow={env['car_flow']}, ped_flow={env['ped_flow']}, hora={env['hora']}")
+            for desc, grau in regra_ativacoes:
+                if grau > 0.01:
                     print(f"  - {desc} -> grau={grau:.3f}")
             print("-" * 60)
             self._last_fuzzy_print_time = now
 
-        # threshold reduzido para 5.0 (ajustável)
+        # --- Decisão de troca (mantém lógica por prioridade) ---
+        # se a prioridade fuzzy exigir troca, executa sequência
         if priority >= 5.0:
             if self.light_h.state == 'green':
                 self.light_h.state = 'yellow'
@@ -511,6 +743,18 @@ class TrafficLightController:
                 self.light_v.state = 'yellow'
                 self.change_sequence = 'to_h'
             self.timer = 0
+            return
+
+        # adicional: se o tempo verde atual exceder o tempo recomendado (quando disponível), inicia troca
+        if tempo_recomendado is not None:
+            if tempo_verde_segundos >= tempo_recomendado:
+                if self.light_h.state == 'green':
+                    self.light_h.state = 'yellow'
+                    self.change_sequence = 'to_v'
+                else:
+                    self.light_v.state = 'yellow'
+                    self.change_sequence = 'to_h'
+                self.timer = 0
 
 # --- AMBIENTE ---
 def draw_environment():
@@ -527,11 +771,12 @@ def draw_environment():
             pygame.draw.rect(screen, COLOR_WHITE, (x, 395, 20, 10))
 
     # --- Faixas de pedestre restritas às vias, um pouco antes do cruzamento ---
-    cw_thickness = 14    # espessura da faixa (altura das listras horizontais)
-    stripe_w = 10        # largura de cada listra
-    stripe_gap = 6       # espaço entre listras
+    # usa a constante global CW_THICKNESS para espessura (agora maior)
+    cw_thickness = CW_THICKNESS    # espessura da faixa (altura das listras horizontais)
+    stripe_w = 12        # largura de cada listra (aumentei para combinar com a espessura)
+    stripe_gap = 7     # espaço entre listras (ajustado)
     stripe_margin = 8    # margem interna dentro da via (para não pintar rente às bordas)
-    cw_gap = 12          # distância da linha de parada/área de stop
+    cw_gap = CW_GAP      # distância da linha de parada/área de stop
 
     # limites das vias (para garantir faixas só sobre as vias)
     road_x0, road_x1 = 350, 450   # vertical: x-range da via
@@ -622,6 +867,16 @@ def main():
     LOG_INTERVAL = 1.0
     last_log = 0.0
 
+    # ambiente inicial e controle de refresh
+    env = generate_random_environment()
+    ENV_REFRESH_INTERVAL = 30.0 # Teste com 30 segundos  # segundos (1 minuto) para regenerar variáveis ambientais aleatórias
+    last_env_update = 0.0
+
+    # alerta visual quando o ambiente muda
+    env_alert_start = None
+    ENV_ALERT_DURATION = 3.0  # segundos que o alerta permanece visível
+    env_alert_text = ""
+
     try:
         while True:
             # controla dt e tempo simulado (usado para logging)
@@ -629,49 +884,71 @@ def main():
             dt = dt_ms / 1000.0
             sim_time += dt
 
-            # Loop de eventos para capturar pressionamento de teclas
+            # atualiza ambiente aleatório periodicamente
+            if sim_time - last_env_update >= ENV_REFRESH_INTERVAL:
+                new_env = generate_random_environment()
+                env = new_env
+                last_env_update = sim_time
+                # registra alerta para exibição na tela
+                env_alert_text = f"Ambiente alterado: {env['clima']} | Carros: {env['car_flow']} | Pedestres: {env['ped_flow']} | Hora: {env['hora']}"
+                env_alert_start = sim_time
+
+            # Loop de eventos (apenas QUIT / ESC)
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     raise KeyboardInterrupt
-                # DETECÇÃO DE TECLAS PARA SPAWN MANUAL
-                if event.type == pygame.KEYDOWN:
-                    # Pressionou 'h' para carro Horizontal
-                    if event.key == pygame.K_h:
-                        if horizontal_spawn_side == 'left':
-                            c = Car(-40, 370, 'right') # Vem da esquerda
-                            horizontal_spawn_side = 'right'
-                        else:
-                            c = Car(SCREEN_WIDTH, 410, 'left') # Vem da direita
-                            horizontal_spawn_side = 'left'
-                        all_cars.add(c)
-                        total_spawned += 1
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    raise KeyboardInterrupt
 
-                    # Pressionou 'v' para carro Vertical
-                    if event.key == pygame.K_v:
-                        if vertical_spawn_side == 'top':
-                            c = Car(370, -40, 'down') # Vem de cima
-                            vertical_spawn_side = 'bottom'
-                        else:
-                            c = Car(410, SCREEN_HEIGHT, 'up') # Vem de baixo
-                            vertical_spawn_side = 'top'
-                        all_cars.add(c)
-                        total_spawned += 1
+            # --- SPAWN AUTOMÁTICO ALEATÓRIO (substitui spawn manual por teclas) ---
+            # taxas base (por segundo)
+            base_car_spawn_h = 0.6   # base carros por segundo na via horizontal
+            base_car_spawn_v = 0.6   # base carros por segundo na via vertical
+            base_ped_spawn_each = 0.06  # base probabilidade por segundo por faixa (cada uma das 4)
 
-                    # Teclas para pedestres nas faixas
-                    if event.key == pygame.K_u:
-                        all_pedestrians.add(Pedestrian('h_n'))  # faixa superior vertical (U)
-                        # pedestre atravessa via vertical -> precisa de light_v RED => solicitar troca se necessário
-                        controller.request_ped_cross('h')
-                    if event.key == pygame.K_i:
-                        all_pedestrians.add(Pedestrian('h_s'))  # faixa inferior vertical (I)
-                        controller.request_ped_cross('h')
-                    if event.key == pygame.K_o:
-                        all_pedestrians.add(Pedestrian('v_r'))  # faixa direita horizontal (O)
-                        # atravessam via horizontal -> precisam que light_h seja RED
-                        controller.request_ped_cross('v')
-                    if event.key == pygame.K_p:
-                        all_pedestrians.add(Pedestrian('v_l'))  # faixa esquerda horizontal (P)
-                        controller.request_ped_cross('v')
+            # aplica multiplicadores gerados pelo "fluxo" do ambiente
+            car_multiplier = CAR_FLOW_MULT.get(env["car_flow"], 1.0)
+            ped_multiplier = PED_FLOW_MULT.get(env["ped_flow"], 1.0)
+
+            car_spawn_rate_h = base_car_spawn_h * car_multiplier
+            car_spawn_rate_v = base_car_spawn_v * car_multiplier
+            ped_spawn_rate_each = base_ped_spawn_each * ped_multiplier
+
+            # carros horizontais (alterna lado de spawn)
+            if random.random() < car_spawn_rate_h * dt:
+                if horizontal_spawn_side == 'left':
+                    c = Car(-40, 370, 'right')  # vem da esquerda
+                    horizontal_spawn_side = 'right'
+                else:
+                    c = Car(SCREEN_WIDTH, 410, 'left')  # vem da direita
+                    horizontal_spawn_side = 'left'
+                all_cars.add(c)
+                total_spawned += 1
+
+            # carros verticais (alterna topo/baixo)
+            if random.random() < car_spawn_rate_v * dt:
+                if vertical_spawn_side == 'top':
+                    c = Car(370, -40, 'down')  # vem de cima
+                    vertical_spawn_side = 'bottom'
+                else:
+                    c = Car(410, SCREEN_HEIGHT, 'up')  # vem de baixo
+                    vertical_spawn_side = 'top'
+                all_cars.add(c)
+                total_spawned += 1
+
+            # pedestres — cada faixa tem sua chance
+            if random.random() < ped_spawn_rate_each * dt:
+                all_pedestrians.add(Pedestrian('h_n'))
+                controller.request_ped_cross('h')
+            if random.random() < ped_spawn_rate_each * dt:
+                all_pedestrians.add(Pedestrian('h_s'))
+                controller.request_ped_cross('h')
+            if random.random() < ped_spawn_rate_each * dt:
+                all_pedestrians.add(Pedestrian('v_r'))
+                controller.request_ped_cross('v')
+            if random.random() < ped_spawn_rate_each * dt:
+                all_pedestrians.add(Pedestrian('v_l'))
+                controller.request_ped_cross('v')
 
             # --- PERCEPÇÃO DO AGENTE (SENSORES) ---
             # conta carros em fila por eixo
@@ -708,7 +985,7 @@ def main():
             PED_BLOCK_H = ped_crossing_h
 
             # atualiza controlador com as contagens de carros esperando
-            controller.update(cars_waiting_v, cars_waiting_h)
+            controller.update(cars_waiting_v, cars_waiting_h, env=env, ped_waiting_total=ped_waiting_total)
 
             # --- Atualiza movimento dos carros (depois de avaliar bloqueios por pedestres) ---
             all_cars.update(all_cars, light_v, light_h)
@@ -725,13 +1002,46 @@ def main():
             info_h = font.render(f"Carros esperando na Horizontal: {cars_waiting_h}", True, COLOR_BLACK)
             ped_info = font.render(f"Pedestres esperando: {ped_waiting_total} | atravessando V:{ped_crossing_v} H:{ped_crossing_h}", True, COLOR_BLACK)
             priority_text = font.render(f"Prioridade (Fuzzy): {controller.last_priority_score:.2f}", True, COLOR_BLACK)
-            controls_text = font.render("H/V = spawn carro. U/I/O/P = spawn pedestre (U cima, I baixo, O direita, P esquerda)", True, COLOR_BLACK)
+
+            # exibe variáveis aleatórias do ambiente
+            env_clima = font.render(f"Clima: {env['clima']}", True, COLOR_BLACK)
+            env_carflow = font.render(f"Fluxo Carros: {env['car_flow']}", True, COLOR_BLACK)
+            env_pedflow = font.render(f"Fluxo Pedestres: {env['ped_flow']}", True, COLOR_BLACK)
+            env_hora = font.render(f"Horário: {env['hora']}", True, COLOR_BLACK)
 
             screen.blit(info_v, (10, 10))
             screen.blit(info_h, (10, 35))
             screen.blit(ped_info, (10, 60))
             screen.blit(priority_text, (SCREEN_WIDTH // 2 - priority_text.get_width() // 2, 10))
-            screen.blit(controls_text, (SCREEN_WIDTH // 2 - controls_text.get_width() // 2, SCREEN_HEIGHT - 40))
+
+            # posição de exibição das variáveis ambientais (canto superior direito)
+            x_off = SCREEN_WIDTH - 10
+            screen.blit(env_clima, (x_off - env_clima.get_width(), 10))
+            screen.blit(env_carflow, (x_off - env_carflow.get_width(), 10 + env_clima.get_height() + 4))
+            screen.blit(env_pedflow, (x_off - env_pedflow.get_width(), 10 + env_clima.get_height() + env_carflow.get_height() + 8))
+            screen.blit(env_hora, (x_off - env_hora.get_width(), 10 + env_clima.get_height() + env_carflow.get_height() + env_pedflow.get_height() + 12))
+
+            # --- Desenha alerta de alteração de ambiente (se ativo) ---
+            if env_alert_start is not None:
+                elapsed = sim_time - env_alert_start
+                if elapsed <= ENV_ALERT_DURATION:
+                    # quebra o texto em linhas para evitar overflow
+                    wrap_width = 56
+                    lines = textwrap.wrap(env_alert_text, wrap_width)
+                    # calcula dimensões do overlay conforme o maior texto
+                    overlay_w = max((font.size(line)[0] for line in lines), default=200) + 40
+                    overlay_h = len(lines) * font.get_linesize() + 24
+                    overlay_s = pygame.Surface((overlay_w, overlay_h), pygame.SRCALPHA)
+                    overlay_s.fill((20, 20, 20, 220))  # fundo escuro translúcido
+                    ox = SCREEN_WIDTH // 2 - overlay_w // 2
+                    oy = 80
+                    screen.blit(overlay_s, (ox, oy))
+                    # desenha linhas centradas
+                    for i, line in enumerate(lines):
+                        line_surf = font.render(line, True, (255, 255, 255))
+                        screen.blit(line_surf, (SCREEN_WIDTH // 2 - line_surf.get_width() // 2, oy + 12 + i * font.get_linesize()))
+                else:
+                    env_alert_start = None
 
             pygame.display.flip()
 
