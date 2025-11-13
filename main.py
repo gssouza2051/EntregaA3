@@ -19,15 +19,12 @@ Instalação e execução (Windows)
    python main.py
 """
 
-
 import os
 # oculta a mensagem de boas-vindas do pygame
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
 
 import warnings
-# suprime o aviso deprecatório do pkg_resources (setuptools)
 warnings.filterwarnings("ignore", message=r".*pkg_resources is deprecated.*", category=UserWarning)
-# opcional: suprimir DeprecationWarning gerais (usar com cuidado)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import pygame
@@ -40,99 +37,100 @@ import csv
 from pathlib import Path
 import time
 import textwrap
+import datetime
 #from reset_planilha import verificar_e_resetar_planilha
 
 # Chamar função para resetar planilha se desejado
 #verificar_e_resetar_planilha()
 
 # métricas (arquivo)
-METRICS_FILE = Path("metrics.csv")
-cars_exited = 0
-total_spawned = 0
+ARQUIVOS_METRICAS = Path("metricas.csv")
+carros_saíram = 0
+total_gerado = 0
 
 # --- INICIALIZAÇÃO DO PYGAME ---
 pygame.init()
 
 # --- CONSTANTES ---
-SCREEN_WIDTH = 800
-SCREEN_HEIGHT = 800
-screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+LARGURA_TELA = 800
+ALTURA_TELA = 800
+tela = pygame.display.set_mode((LARGURA_TELA, ALTURA_TELA))
 pygame.display.set_caption("Simulador de Semáforo com Lógica Fuzzy")
 
 # Cores e Fonte
-COLOR_WHITE = (255, 255, 255)
-COLOR_BLACK = (0, 0, 0)
-COLOR_GRAY = (100, 100, 100)
-COLOR_GREEN = (0, 200, 0)
-COLOR_YELLOW = (255, 255, 0)
-COLOR_RED = (200, 0, 0)
-COLOR_DARK_GRAY = (50, 50, 50)
-font = pygame.font.SysFont("Arial", 20)
+COR_BRANCA = (255, 255, 255)
+COR_PRETA = (0, 0, 0)
+COR_CINZA = (100, 100, 100)
+COR_VERDE = (0, 200, 0)
+COR_AMARELA = (255, 255, 0)
+COR_VERMELHA = (200, 0, 0)
+COR_CINZA_ESCURO = (50, 50, 50)
+fonte = pygame.font.SysFont("Arial", 20)
 
 # Controle de tempo
-clock = pygame.time.Clock()
+tempo = pygame.time.Clock()
 FPS = 60
 
 # Zonas de parada (ajustadas e separadas por direção)
-STOP_DOWN_MIN, STOP_DOWN_MAX = 320, 360   # vindo de cima (rect.bottom)
-STOP_UP_MIN,   STOP_UP_MAX   = 440, 480   # vindo de baixo (rect.top)
-STOP_RIGHT_MIN,STOP_RIGHT_MAX= 320, 360   # vindo da esquerda (rect.right)
-STOP_LEFT_MIN, STOP_LEFT_MAX = 440, 480   # vindo da direita (rect.left)
+PARADA_EMBAIXO_MIN, PARADA_EMBAIXO_MAX = 320, 360   # vindo de cima 
+PARADA_CIMA_MIN, PARADA_CIMA_MAX = 440, 480   # vindo de baixo 
+PARADA_DIREITA_MIN, PARADA_DIREITA_MAX = 320, 360   # vindo da esquerda 
+PARADA_ESQUERDA_MIN, PARADA_ESQUERDA_MAX = 440, 480   # vindo da direita 
 
 # extensão da área considerada "fila" atrás da linha de parada (em pixels)
-QUEUE_LENGTH = 160
+COMPRIMENTO_FILA = 160
 
 # Constantes das faixas (reutilizadas pelo spawn dos pedestres)
 CW_THICKNESS = 22
 CW_GAP = 12
 
 # limites das vias (usados por desenho e lógica para detectar faixas)
-ROAD_X0, ROAD_X1 = 350, 450
-ROAD_Y0, ROAD_Y1 = 350, 450
+ESTRADA_X0, ESTRADA_X1 = 350, 450
+ESTRADA_Y0, ESTRADA_Y1 = 350, 450
 
 # flags globais para bloquear tráfego quando pedestres estão atravessando
-PED_BLOCK_V = 0  # pedestres atravessando a via vertical (impactam tráfego vertical)
-PED_BLOCK_H = 0  # pedestres atravessando a via horizontal (impactam tráfego horizontal)
+BLOQUEIO_PEDESTRES_VERT = 0  # pedestres atravessando a via vertical (impactam tráfego vertical)
+BLOQUEIO_PEDESTRES_HORI = 0  # pedestres atravessando a via horizontal (impactam tráfego horizontal)
 
 # --- Variáveis ambientais randômicas (clima / fluxo / horário) ---
-CLIMATES = ["Ensolarado", "Chuvoso", "Nublado"]
-FLOW_LEVELS = ["Baixo", "Médio", "Alto"]
+CLIMAS = ["Ensolarado", "Chuvoso", "Nublado"]
+NIVEIS_DE_FLUXO = ["Baixo", "Médio", "Alto"]
 
 # mapeamento de níveis para multiplicadores de spawn (valores base serão multiplicados)
-CAR_FLOW_MULT = {"Baixo": 0.25, "Médio": 0.6, "Alto": 1.3}
-PED_FLOW_MULT = {"Baixo": 0.25, "Médio": 0.6, "Alto": 1.3}
+FLUXO_CARROS_MULTIPLOS = {"Baixo": 0.25, "Médio": 0.6, "Alto": 1.3}
+FLUXO_PEDESTRES_MULTIPLOS = {"Baixo": 0.25, "Médio": 0.6, "Alto": 1.3}
 
-import datetime
 
-def generate_random_environment():
+def gerar_ambiente_aleatorio():
     """Gera um dicionário com clima, fluxo de carros, fluxo de pedestres e horário aleatório.
-    Se a hora cair em período de pico (06:30-08:00 ou 18:00-19:00) força car_flow = 'Alto'.
+    Se a hora cair em período de pico (06:30-08:00 ou 18:00-19:00) força fluxo_de_carros = 'Alto'.
     """
-    clima = random.choice(CLIMATES)
+    clima = random.choice(CLIMAS)
+
     # horário aleatório do dia
     seconds = random.randint(0, 24*3600 - 1)
     hora_dt = (datetime.datetime.min + datetime.timedelta(seconds=seconds)).time()
     hora = hora_dt.strftime("%H:%M:%S")
 
     # escolha inicial com pesos para ter mais probabilidade de Médio
-    carro_flow = random.choices(FLOW_LEVELS, weights=[1, 3, 2], k=1)[0]
-    ped_flow = random.choices(FLOW_LEVELS, weights=[2, 3, 1], k=1)[0]
+    fluxo_carros = random.choices(NIVEIS_DE_FLUXO, weights=[1, 3, 2], k=1)[0]
+    fluxo_de_pedestres = random.choices(NIVEIS_DE_FLUXO, weights=[2, 3, 1], k=1)[0]
 
     # se estiver em horário de pico, força fluxo de carros Alto
-    pico_manha_start = datetime.time(6, 30, 0)
-    pico_manha_end   = datetime.time(8, 0, 0)
-    pico_tarde_start = datetime.time(18, 0, 0)
-    pico_tarde_end   = datetime.time(19, 0, 0)
-    if (pico_manha_start <= hora_dt <= pico_manha_end) or (pico_tarde_start <= hora_dt <= pico_tarde_end):
-        carro_flow = "Alto"
+    pico_manha_comeco = datetime.time(6, 30, 0)
+    pico_manha_fim   = datetime.time(8, 0, 0)
+    pico_manha_comeco = datetime.time(18, 0, 0)
+    pico_manha_fim   = datetime.time(19, 0, 0)
+    if (pico_manha_comeco <= hora_dt <= pico_manha_fim) or (pico_manha_comeco <= hora_dt <= pico_manha_fim):
+        fluxo_carros = "Alto"
 
-    return {"clima": clima, "car_flow": carro_flow, "ped_flow": ped_flow, "hora": hora}
+    return {"clima": clima, "fluxo_de_carros": fluxo_carros, "fluxo_de_pedestres": fluxo_de_pedestres, "hora": hora}
 
-# --- CÉREBRO FUZZY (Sem alterações) ---
+# --- Controlador Fuzzy ---
 
-class FuzzyController:
+class FuzzyControlador:
     """
-    FuzzyController estendido com variáveis linguísticas:
+    FuzzyControlador estendido com variáveis linguísticas:
      - fluxo de carros (Baixo/Médio/Alto)
      - fluxo de pedestres (Baixo/Médio/Alto)
      - horário (Outro/Normal/Pico)  -- mapeado a partir de hora HH:MM:SS
@@ -141,8 +139,8 @@ class FuzzyController:
     """
     def __init__(self):
         # entradas
-        self.car_flow = ctrl.Antecedent(np.arange(0, 11, 1), 'car_flow')      # 0..10
-        self.ped_flow = ctrl.Antecedent(np.arange(0, 11, 1), 'ped_flow')      # 0..10
+        self.fluxo_de_carros = ctrl.Antecedent(np.arange(0, 11, 1), 'fluxo_de_carros')      # 0..10
+        self.fluxo_de_pedestres = ctrl.Antecedent(np.arange(0, 11, 1), 'fluxo_de_pedestres')      # 0..10
         self.horario = ctrl.Antecedent(np.arange(0, 3, 1), 'horario')        # 0:Outro,1:Normal,2:Pico
         self.clima = ctrl.Antecedent(np.arange(0, 3, 1), 'clima')            # 0:Ensolarado,1:Nublado,2:Chuvoso
 
@@ -150,13 +148,13 @@ class FuzzyController:
         self.tempo_semaforo = ctrl.Consequent(np.arange(0, 31, 1), 'tempo_semaforo')  # 0..30 segundos
 
         # memberships - fluxo carros / pedestres (Baixo/Médio/Alto)
-        self.car_flow['Baixo']  = fuzz.trimf(self.car_flow.universe, [0, 0, 4])
-        self.car_flow['Médio']  = fuzz.trimf(self.car_flow.universe, [2, 5, 8])
-        self.car_flow['Alto']   = fuzz.trimf(self.car_flow.universe, [6, 10, 10])
+        self.fluxo_de_carros['Baixo']  = fuzz.trimf(self.fluxo_de_carros.universe, [0, 0, 4])
+        self.fluxo_de_carros['Médio']  = fuzz.trimf(self.fluxo_de_carros.universe, [2, 5, 8])
+        self.fluxo_de_carros['Alto']   = fuzz.trimf(self.fluxo_de_carros.universe, [6, 10, 10])
 
-        self.ped_flow['Baixo']  = fuzz.trimf(self.ped_flow.universe, [0, 0, 4])
-        self.ped_flow['Médio']  = fuzz.trimf(self.ped_flow.universe, [2, 5, 8])
-        self.ped_flow['Alto']   = fuzz.trimf(self.ped_flow.universe, [6, 10, 10])
+        self.fluxo_de_pedestres['Baixo']  = fuzz.trimf(self.fluxo_de_pedestres.universe, [0, 0, 4])
+        self.fluxo_de_pedestres['Médio']  = fuzz.trimf(self.fluxo_de_pedestres.universe, [2, 5, 8])
+        self.fluxo_de_pedestres['Alto']   = fuzz.trimf(self.fluxo_de_pedestres.universe, [6, 10, 10])
 
         # horario categórico: 0 Outro, 1 Normal, 2 Pico
         self.horario['Outro'] = fuzz.trimf(self.horario.universe, [0, 0, 1])
@@ -174,42 +172,42 @@ class FuzzyController:
         self.tempo_semaforo['Alto']  = fuzz.trimf(self.tempo_semaforo.universe, [18, 30, 30])
 
         # --- Regras solicitadas (implementadas aqui) ---
-        rules = []
+        regras = []
 
         # 1. SE (Fluxo de Carros é Alto) E (Horário é Pico) ENTÃO (Tempo é Alto).
-        rules.append(ctrl.Rule(self.car_flow['Alto'] & self.horario['Pico'], self.tempo_semaforo['Alto']))
+        regras.append(ctrl.Rule(self.fluxo_de_carros['Alto'] & self.horario['Pico'], self.tempo_semaforo['Alto']))
 
         # 2. SE (Fluxo de Carros é Médio) E (Fluxo de Pedestres é Médio) E (Horário é Normal) ENTÃO (Tempo é Médio).
-        rules.append(ctrl.Rule(self.car_flow['Médio'] & self.ped_flow['Médio'] & self.horario['Normal'], self.tempo_semaforo['Médio']))
+        regras.append(ctrl.Rule(self.fluxo_de_carros['Médio'] & self.fluxo_de_pedestres['Médio'] & self.horario['Normal'], self.tempo_semaforo['Médio']))
 
         # 3. SE (Fluxo de Carros é Baixo) OU (Fluxo de Pedestres é Baixo) ENTÃO (Tempo é Baixo).
-        rules.append(ctrl.Rule(self.car_flow['Baixo'] | self.ped_flow['Baixo'], self.tempo_semaforo['Baixo']))
+        regras.append(ctrl.Rule(self.fluxo_de_carros['Baixo'] | self.fluxo_de_pedestres['Baixo'], self.tempo_semaforo['Baixo']))
 
         # 4. SE (Fluxo de Carros é Alto) E (Fluxo de Pedestres é Alto) E (Horário é Normal) ENTÃO (Tempo é Médio).
-        rules.append(ctrl.Rule(self.car_flow['Alto'] & self.ped_flow['Alto'] & self.horario['Normal'], self.tempo_semaforo['Médio']))
+        regras.append(ctrl.Rule(self.fluxo_de_carros['Alto'] & self.fluxo_de_pedestres['Alto'] & self.horario['Normal'], self.tempo_semaforo['Médio']))
 
         # 5. SE (Fluxo de Carros é Alto) E (Fluxo de Pedestres é Alto) E (Horário é Pico) ENTÃO (Tempo é Alto).
-        rules.append(ctrl.Rule(self.car_flow['Alto'] & self.ped_flow['Alto'] & self.horario['Pico'], self.tempo_semaforo['Alto']))
+        regras.append(ctrl.Rule(self.fluxo_de_carros['Alto'] & self.fluxo_de_pedestres['Alto'] & self.horario['Pico'], self.tempo_semaforo['Alto']))
 
         # 6. SE (Fluxo de Carros é Alto) E (Clima é Chuvoso) ENTÃO (Tempo é Alto).
-        rules.append(ctrl.Rule(self.car_flow['Alto'] & self.clima['Chuvoso'], self.tempo_semaforo['Alto']))
+        regras.append(ctrl.Rule(self.fluxo_de_carros['Alto'] & self.clima['Chuvoso'], self.tempo_semaforo['Alto']))
 
         # Regras adicionais conforme especificado:
         # - SE Fluxo de Carros é Baixo E Fluxo de Pedestres é Baixo E Horário Outro ENTÃO Tempo Baixo.
-        rules.append(ctrl.Rule(self.car_flow['Baixo'] & self.ped_flow['Baixo'] & self.horario['Outro'], self.tempo_semaforo['Baixo']))
+        regras.append(ctrl.Rule(self.fluxo_de_carros['Baixo'] & self.fluxo_de_pedestres['Baixo'] & self.horario['Outro'], self.tempo_semaforo['Baixo']))
 
         # - SE Fluxo de Carros é Baixo E Fluxo de Pedestres é Alto ENTÃO Tempo Médio.
-        rules.append(ctrl.Rule(self.car_flow['Baixo'] & self.ped_flow['Alto'], self.tempo_semaforo['Médio']))
+        regras.append(ctrl.Rule(self.fluxo_de_carros['Baixo'] & self.fluxo_de_pedestres['Alto'], self.tempo_semaforo['Médio']))
 
         # - SE Fluxo de Carros é Médio E Horário é Outro ENTÃO Tempo Médio.
-        rules.append(ctrl.Rule(self.car_flow['Médio'] & self.horario['Outro'], self.tempo_semaforo['Médio']))
+        regras.append(ctrl.Rule(self.fluxo_de_carros['Médio'] & self.horario['Outro'], self.tempo_semaforo['Médio']))
 
         # monta sistema
-        self.sistema = ctrl.ControlSystem(rules)
+        self.sistema = ctrl.ControlSystem(regras)
         self.sim = ctrl.ControlSystemSimulation(self.sistema)
 
         # armazenar descrições das regras na mesma ordem (para impressão)
-        self.rules_descriptions = [
+        self.descricoes_regra = [
             "1) SE (Fluxo de Carros é Alto) E (Horário é de Pico) ENTÃO (Tempo é Alto).",
             "2) SE (Fluxo de Carros é Médio) E (Fluxo de Pedestres é Médio) E (Horário é Normal) ENTÃO (Tempo é Médio).",
             "3) SE (Fluxo de Carros é Baixo) OU (Fluxo de Pedestres é Baixo) ENTÃO (Tempo é Baixo).",
@@ -223,15 +221,15 @@ class FuzzyController:
 
     # mapeamentos auxiliares de rótulos para valores numéricos usados na entrada fuzzy
     @staticmethod
-    def map_flow_label_to_value(label):
+    def mapear_rotulo_de_fluxo_para_valor(label):
         return {'Baixo': 2.0, 'Médio': 5.0, 'Alto': 9.0}.get(label, 5.0)
 
     @staticmethod
-    def map_clima_label_to_value(label):
+    def mapear_rotulo_climatico_para_valor(label):
         return {'Ensolarado': 0.0, 'Nublado': 1.0, 'Chuvoso': 2.0}.get(label, 1.0)
 
     @staticmethod
-    def map_hora_label_to_value(hora_str):
+    def mapear_rotulo_hora_para_valor(hora_str):
         # hora_str "HH:MM:SS"
         try:
             h = int(hora_str.split(":")[0])
@@ -245,22 +243,22 @@ class FuzzyController:
             return 1.0  # Normal
         return 0.0      # Outro
 
-    def compute_tempo_from_env(self, car_flow_label, ped_flow_label, hora_str, clima_label):
+    def calcular_tempo_a_partir_do_ambiente(self, rotulo_fluxo_carros, rotulo_fluxo_pedestres, hora_str, rotulo_clima):
         """
         Recebe labels do ambiente (strings) e retorna tempo_recomendado (float segundos).
         Implementação mais resiliente: usa uma simulação local e tenta recuperar a saída
         mesmo que a chave não exista exatamente como 'tempo_semaforo'.
         """
-        cf = self.map_flow_label_to_value(car_flow_label)
-        pf = self.map_flow_label_to_value(ped_flow_label)
-        hr = self.map_hora_label_to_value(hora_str)
-        cl = self.map_clima_label_to_value(clima_label)
+        cf = self.mapear_rotulo_de_fluxo_para_valor(rotulo_fluxo_carros)
+        pf = self.mapear_rotulo_de_fluxo_para_valor(rotulo_fluxo_pedestres)
+        hr = self.mapear_rotulo_hora_para_valor(hora_str)
+        cl = self.mapear_rotulo_climatico_para_valor(rotulo_clima)
 
         try:
             # cria uma simulação local para evitar estado/resíduos entre chamadas
             sim_local = ctrl.ControlSystemSimulation(self.sistema)
-            sim_local.input['car_flow'] = float(cf)
-            sim_local.input['ped_flow'] = float(pf)
+            sim_local.input['fluxo_de_carros'] = float(cf)
+            sim_local.input['fluxo_de_pedestres'] = float(pf)
             sim_local.input['horario'] = float(hr)
             sim_local.input['clima'] = float(cl)
 
@@ -275,14 +273,14 @@ class FuzzyController:
                 # fallback seguro
                 tempo = 12.0
         except Exception as e:
-            print("Erro compute_tempo_from_env:", e)
+            print("Erro calcular_tempo_a_partir_do_ambiente:", e)
             tempo = 12.0
 
         return tempo
 
-    def compute_priority(self, num_carros_vermelha, tempo_verde, num_pedestres_esperando=0):
+    def prioridade_de_computacao(self, num_carros_vermelha, tempo_verde, num_pedestres_esperando=0):
         """
-        Método compatível usado pelo TrafficLightController.
+        Método compatível usado pelo ControladorSemaforo.
         Retorna: (prioridade_float [0..10], ativacoes_list).
         Implementação heurística simples para manter compatibilidade com a lógica existente.
         """
@@ -297,75 +295,75 @@ class FuzzyController:
         prioridade = float(max(0.0, min(10.0, prioridade_norm * 10.0)))
 
         ativacoes = [
-            ("car_component", float(w_c * (c / 10.0))),
-            ("time_component", float(w_t * (t / 30.0))),
-            ("ped_component", float(w_p * (p / 6.0))),
+            ("componente_carro", float(w_c * (c / 10.0))),
+            ("componente_tempo", float(w_t * (t / 30.0))),
+            ("componente_pedestres", float(w_p * (p / 6.0))),
         ]
         return prioridade, ativacoes
 
-    def evaluate_rules(self, car_flow_label, ped_flow_label, hora_str, clima_label):
+    def avaliar_regras(self, rotulo_fluxo_carros, rotulo_fluxo_pedestres, hora_str, rotulo_clima):
         """
         Retorna lista de (descricao_regra, grau_ativacao) para as regras implementadas.
         Usa interp_membership nas MF definidas e combina com min/max conforme AND/OR.
         """
-        cf = self.map_flow_label_to_value(car_flow_label)
-        pf = self.map_flow_label_to_value(ped_flow_label)
-        hr = self.map_hora_label_to_value(hora_str)
-        cl = self.map_clima_label_to_value(clima_label)
+        cf = self.mapear_rotulo_de_fluxo_para_valor(rotulo_fluxo_carros)
+        pf = self.mapear_rotulo_de_fluxo_para_valor(rotulo_fluxo_pedestres)
+        hr = self.mapear_rotulo_hora_para_valor(hora_str)
+        cl = self.mapear_rotulo_climatico_para_valor(rotulo_clima)
 
-        u_car = self.car_flow.universe
-        u_ped = self.ped_flow.universe
-        u_hor = self.horario.universe
-        u_cli = self.clima.universe
+        u_carro = self.fluxo_de_carros.universe
+        u_pedestre = self.fluxo_de_pedestres.universe
+        u_hora = self.horario.universe
+        u_clima = self.clima.universe
 
-        # memberships carros
-        car_baixo = fuzz.interp_membership(u_car, self.car_flow['Baixo'].mf, cf)
-        car_medio = fuzz.interp_membership(u_car, self.car_flow['Médio'].mf, cf)
-        car_alto  = fuzz.interp_membership(u_car, self.car_flow['Alto'].mf, cf)
+        # carros
+        carros_baixo = fuzz.interp_membership(u_carro, self.fluxo_de_carros['Baixo'].mf, cf)
+        carros_medio = fuzz.interp_membership(u_carro, self.fluxo_de_carros['Médio'].mf, cf)
+        carros_alto  = fuzz.interp_membership(u_carro, self.fluxo_de_carros['Alto'].mf, cf)
         # pedestres
-        ped_baixo = fuzz.interp_membership(u_ped, self.ped_flow['Baixo'].mf, pf)
-        ped_medio = fuzz.interp_membership(u_ped, self.ped_flow['Médio'].mf, pf)
-        ped_alto  = fuzz.interp_membership(u_ped, self.ped_flow['Alto'].mf, pf)
+        ped_baixo = fuzz.interp_membership(u_pedestre, self.fluxo_de_pedestres['Baixo'].mf, pf)
+        ped_medio = fuzz.interp_membership(u_pedestre, self.fluxo_de_pedestres['Médio'].mf, pf)
+        ped_alto  = fuzz.interp_membership(u_pedestre, self.fluxo_de_pedestres['Alto'].mf, pf)
         # horario
-        hor_outro  = fuzz.interp_membership(u_hor, self.horario['Outro'].mf, hr)
-        hor_normal = fuzz.interp_membership(u_hor, self.horario['Normal'].mf, hr)
-        hor_pico   = fuzz.interp_membership(u_hor, self.horario['Pico'].mf, hr)
+        hora_outro  = fuzz.interp_membership(u_hora, self.horario['Outro'].mf, hr)
+        hora_normal = fuzz.interp_membership(u_hora, self.horario['Normal'].mf, hr)
+        hora_pico   = fuzz.interp_membership(u_hora, self.horario['Pico'].mf, hr)
         # clima
-        cli_ensol = fuzz.interp_membership(u_cli, self.clima['Ensolarado'].mf, cl)
-        cli_nub   = fuzz.interp_membership(u_cli, self.clima['Nublado'].mf, cl)
-        cli_chuv  = fuzz.interp_membership(u_cli, self.clima['Chuvoso'].mf, cl)
+        clima_ensolarado = fuzz.interp_membership(u_clima, self.clima['Ensolarado'].mf, cl)
+        clima_nublado   = fuzz.interp_membership(u_clima, self.clima['Nublado'].mf, cl)
+        clima_chuvoso  = fuzz.interp_membership(u_clima, self.clima['Chuvoso'].mf, cl)
 
         # calcula graus conforme regras definidas (mesma ordem das descrições)
         graus = []
         # 1
-        graus.append( float(np.fmin(car_alto, hor_pico)) )
+        graus.append( float(np.fmin(carros_alto, hora_pico)) )
         # 2
-        graus.append( float(np.fmin(np.fmin(car_medio, ped_medio), hor_normal)) )
+        graus.append( float(np.fmin(np.fmin(carros_medio, ped_medio), hora_normal)) )
         # 3
-        graus.append( float(np.fmax(car_baixo, ped_baixo)) )
+        graus.append( float(np.fmax(carros_baixo, ped_baixo)) )
         # 4
-        graus.append( float(np.fmin(np.fmin(car_alto, ped_alto), hor_normal)) )
+        graus.append( float(np.fmin(np.fmin(carros_alto, ped_alto), hora_normal)) )
         # 5
-        graus.append( float(np.fmin(np.fmin(car_alto, ped_alto), hor_pico)) )
+        graus.append( float(np.fmin(np.fmin(carros_alto, ped_alto), hora_pico)) )
         # 6
-        graus.append( float(np.fmin(car_alto, cli_chuv)) )
+        graus.append( float(np.fmin(carros_alto, clima_chuvoso)) )
         # 7
-        graus.append( float(np.fmin(np.fmin(car_baixo, ped_baixo), hor_outro)) )
+        graus.append( float(np.fmin(np.fmin(carros_baixo, ped_baixo), hora_outro)) )
         # 8
-        graus.append( float(np.fmin(car_baixo, ped_alto)) )
+        graus.append( float(np.fmin(carros_baixo, ped_alto)) )
         # 9
-        graus.append( float(np.fmin(car_medio, hor_outro)) )
+        graus.append( float(np.fmin(carros_medio, hora_outro)) )
 
-        ativacoes = list(zip(self.rules_descriptions, graus))
+        ativacoes = list(zip(self.descricoes_regra, graus))
         return ativacoes
 
-class TrafficLight:
-    def __init__(self, x, y, orientation='vertical'):
-        self.x, self.y, self.orientation = x, y, orientation
-        self.state = 'red'
+class Semaforo:
+    def __init__(self, x, y, orientacao='vertical'):
+        self.x, self.y, self.orientacao = x, y, orientacao
+        self.estado = 'vermelho'
         # parâmetros visuais ajustáveis
-        self.housing_w = 40 if orientation == 'vertical' else 110
-        self.housing_h = 110 if orientation == 'vertical' else 40
+        self.housing_w = 40 if orientacao == 'vertical' else 110
+        self.housing_h = 110 if orientacao == 'vertical' else 40
         self.radius = 14
         self.padding = 8
 
@@ -376,24 +374,24 @@ class TrafficLight:
 
         # desenha sombra da carcaça
         shadow = pygame.Rect(housing.x + 4, housing.y + 6, housing.w, housing.h)
-        pygame.draw.rect(screen, (15, 15, 15, 60), shadow, border_radius=8)
+        pygame.draw.rect(tela, (15, 15, 15, 60), shadow, border_radius=8)
 
         # carcaça externa e placa interna
-        pygame.draw.rect(screen, (20, 20, 20), housing, border_radius=8)
-        pygame.draw.rect(screen, (40, 40, 40), inner, border_radius=6)
+        pygame.draw.rect(tela, (20, 20, 20), housing, border_radius=8)
+        pygame.draw.rect(tela, (40, 40, 40), inner, border_radius=6)
 
         # haste/pólo
-        if self.orientation == 'vertical':
+        if self.orientacao == 'vertical':
             pole = pygame.Rect(housing.centerx - 6, housing.bottom, 12, 60)
             pole_shadow = pygame.Rect(pole.x + 3, pole.y + 4, pole.w, pole.h)
         else:
             pole = pygame.Rect(housing.right, housing.centery - 6, 60, 12)
             pole_shadow = pygame.Rect(pole.x + 4, pole.y + 3, pole.w, pole.h)
-        pygame.draw.rect(screen, (20, 20, 20), pole_shadow, border_radius=6)
-        pygame.draw.rect(screen, (60, 60, 60), pole, border_radius=6)
+        pygame.draw.rect(tela, (20, 20, 20), pole_shadow, border_radius=6)
+        pygame.draw.rect(tela, (60, 60, 60), pole, border_radius=6)
 
-        # calcula centros das lâmpadas na ordem (red, yellow, green)
-        if self.orientation == 'vertical':
+        # calcula centros das lâmpadas na ordem (vermelho, amarelo, verde)
+        if self.orientacao == 'vertical':
             centers = [
                 (housing.centerx, housing.y + self.padding + self.radius),
                 (housing.centerx, housing.y + housing.h//2),
@@ -408,234 +406,234 @@ class TrafficLight:
 
         # cores efetivas (ligadas vs apagadas)
         col_on = {
-            'red': COLOR_RED,
-            'yellow': COLOR_YELLOW,
-            'green': COLOR_GREEN
+            'vermelho': COR_VERMELHA,
+            'amarelo': COR_AMARELA,
+            'verde': COR_VERDE
         }
-        states = ['red', 'yellow', 'green']
+        estados_semaforo = ['vermelho', 'amarelo', 'verde']
 
         # desenha cada lente com brilho/halo quando ligada
-        for i, st in enumerate(states):
+        for i, st in enumerate(estados_semaforo):
             center = centers[i]
-            on = (self.state == st)
-            base_color = col_on[st] if on else COLOR_DARK_GRAY
+            on = (self.estado == st)
+            base_color = col_on[st] if on else COR_CINZA_ESCURO
 
             # halo (apenas quando ligada)
             if on:
-                glow_s = pygame.Surface((self.radius*6, self.radius*6), pygame.SRCALPHA)
-                glow_col = (*col_on[st], 90)
-                pygame.draw.circle(glow_s, glow_col, (self.radius*3, self.radius*3), int(self.radius*2.6))
-                screen.blit(glow_s, (center[0] - self.radius*3, center[1] - self.radius*3))
+                brilho_s = pygame.Surface((self.radius*6, self.radius*6), pygame.SRCALPHA)
+                brilho_col = (*col_on[st], 90)
+                pygame.draw.circle(brilho_s, brilho_col, (self.radius*3, self.radius*3), int(self.radius*2.6))
+                tela.blit(brilho_s, (center[0] - self.radius*3, center[1] - self.radius*3))
 
             # lente com leve gradiente (simulado por dois círculos)
-            pygame.draw.circle(screen, (10,10,10), center, self.radius+2)  # borda escura
-            pygame.draw.circle(screen, base_color, center, self.radius)
+            pygame.draw.circle(tela, (10,10,10), center, self.radius+2)  # borda escura
+            pygame.draw.circle(tela, base_color, center, self.radius)
             # highlight frontal pequeno
             highlight = pygame.Surface((self.radius*2, self.radius*2), pygame.SRCALPHA)
             pygame.draw.circle(highlight, (255,255,255,60), (int(self.radius*0.6), int(self.radius*0.6)), int(self.radius*0.6))
-            screen.blit(highlight, (center[0]-self.radius, center[1]-self.radius))
+            tela.blit(highlight, (center[0]-self.radius, center[1]-self.radius))
 
         # pequeno detalhe: para vertical desenha um parafuso/placa
         screw_color = (30, 30, 30)
-        if self.orientation == 'vertical':
-            pygame.draw.circle(screen, screw_color, (housing.centerx - 12, housing.centery), 3)
-            pygame.draw.circle(screen, screw_color, (housing.centerx + 12, housing.centery), 3)
+        if self.orientacao == 'vertical':
+            pygame.draw.circle(tela, screw_color, (housing.centerx - 12, housing.centery), 3)
+            pygame.draw.circle(tela, screw_color, (housing.centerx + 12, housing.centery), 3)
         else:
-            pygame.draw.circle(screen, screw_color, (housing.centerx, housing.centery - 12), 3)
-            pygame.draw.circle(screen, screw_color, (housing.centerx, housing.centery + 12), 3)
+            pygame.draw.circle(tela, screw_color, (housing.centerx, housing.centery - 12), 3)
+            pygame.draw.circle(tela, screw_color, (housing.centerx, housing.centery + 12), 3)
 
-class Car(pygame.sprite.Sprite):
-    def __init__(self, x, y, direction):
+class Carro(pygame.sprite.Sprite):
+    def __init__(self, x, y, direcao):
         super().__init__()
-        self.direction = direction
-        w, h = (20, 40) if direction in ['up', 'down'] else (40, 20)
+        self.direcao = direcao
+        w, h = (20, 40) if direcao in ['pra_cima', 'pra_baixo'] else (40, 20)
         surf = pygame.Surface((w, h), pygame.SRCALPHA)
-        body_color = random.choice([(30,144,255), (220,20,60), (255,215,0), (60,179,113)])
-        pygame.draw.rect(surf, body_color, (0, 0, w, h), border_radius=4)
+        cor_carro = random.choice([(30,144,255), (220,20,60), (255,215,0), (60,179,113)])
+        pygame.draw.rect(surf, cor_carro, (0, 0, w, h), border_radius=4)
         pygame.draw.rect(surf, (0,0,0), (0,0,w,h), 2, border_radius=4)  # contorno
 
         # janela frontal posicionada conforme a direção do movimento
-        window_color = (200, 230, 255)
-        if direction == 'up':
+        cor_janela_carro = (200, 230, 255)
+        if direcao == 'pra_cima':
             # frente no topo
-            pygame.draw.rect(surf, window_color, (3, 6, w-6, 12), border_radius=3)
-        elif direction == 'down':
+            pygame.draw.rect(surf, cor_janela_carro, (3, 6, w-6, 12), border_radius=3)
+        elif direcao == 'pra_baixo':
             # frente na parte inferior
-            pygame.draw.rect(surf, window_color, (3, h-18, w-6, 12), border_radius=3)
-        elif direction == 'left':
+            pygame.draw.rect(surf, cor_janela_carro, (3, h-18, w-6, 12), border_radius=3)
+        elif direcao == 'esquerda':
             # frente na lateral esquerda
-            pygame.draw.rect(surf, window_color, (6, 3, 12, h-6), border_radius=3)
+            pygame.draw.rect(surf, cor_janela_carro, (6, 3, 12, h-6), border_radius=3)
         else:  # right
             # frente na lateral direita
-            pygame.draw.rect(surf, window_color, (w-18, 3, 12, h-6), border_radius=3)
+            pygame.draw.rect(surf, cor_janela_carro, (w-18, 3, 12, h-6), border_radius=3)
 
         self.image = surf
         self.rect = self.image.get_rect(topleft=(x, y))
-        self.speed = 2
+        self.velocidade = 2
 
     def update(self, cars_group, traffic_light_v, traffic_light_h):
-        global cars_exited, PED_BLOCK_V, PED_BLOCK_H
-        can_move = True
+        global carros_saíram, BLOQUEIO_PEDESTRES_VERT, BLOQUEIO_PEDESTRES_HORI
+        pode_mover = True
         # calcula deslocamento
-        dx = (1 if self.direction == 'right' else -1 if self.direction == 'left' else 0) * self.speed
-        dy = (1 if self.direction == 'down' else -1 if self.direction == 'up' else 0) * self.speed
+        dx = (1 if self.direcao == 'direita' else -1 if self.direcao == 'esquerda' else 0) * self.velocidade
+        dy = (1 if self.direcao == 'pra_baixo' else -1 if self.direcao == 'pra_cima' else 0) * self.velocidade
 
         # --- Evitar parada SOBRE as faixas: calcula posições seguras de parada usando constantes de faixa ---
-        # faixa norte (quem vem de cima - 'down')
-        cross_north_top = STOP_DOWN_MIN - CW_GAP - CW_THICKNESS
-        safe_stop_down = cross_north_top - 4  # margem para não invadir a faixa
+        # faixa norte (quem vem de cima - 'pra_baixo')
+        topo_norte_cruzado = PARADA_EMBAIXO_MIN - CW_GAP - CW_THICKNESS
+        parada_segura_embaixo = topo_norte_cruzado - 4  # margem para não invadir a faixa
 
-        # faixa sul (quem vem de baixo - 'up')
-        cross_south_top = STOP_UP_MIN + CW_GAP
-        cross_south_bottom = cross_south_top + CW_THICKNESS
-        safe_stop_up = cross_south_bottom + 4
+        # faixa sul (quem vem de baixo - 'pra_cima')
+        topo_cruzado_sul = PARADA_CIMA_MIN + CW_GAP
+        cruz_sul_inferior = topo_cruzado_sul + CW_THICKNESS
+        parada_segura_cima = cruz_sul_inferior + 4
 
-        # faixa oeste (quem vem da esquerda - 'right')
-        cross_west_left = STOP_RIGHT_MIN - CW_GAP - CW_THICKNESS
-        safe_stop_right = cross_west_left - 4
+        # faixa oeste (quem vem da esquerda - 'direita')
+        cruz_oeste_esquerda = PARADA_DIREITA_MIN - CW_GAP - CW_THICKNESS
+        parada_segura_direita = cruz_oeste_esquerda - 4
 
-        # faixa leste (quem vem da direita - 'left')
-        cross_east_left = STOP_LEFT_MIN + CW_GAP
-        cross_east_right = cross_east_left + CW_THICKNESS
-        safe_stop_left = cross_east_right + 4
+        # faixa leste (quem vem da direita - 'esquerda')
+        cruz_leste_esquerda = PARADA_ESQUERDA_MIN + CW_GAP
+        cruz_leste_direita = cruz_leste_esquerda + CW_THICKNESS
+        parada_segura_esquerda = cruz_leste_direita + 4
 
         # checa semáforo / posições de parada sem invadir faixas
-        if self.direction == 'down' and traffic_light_v.state != 'green':
+        if self.direcao == 'pra_baixo' and traffic_light_v.estado != 'verde':
             # impede mover para dentro da área da faixa norte
-            if (self.rect.bottom + dy) > safe_stop_down and self.rect.bottom <= STOP_DOWN_MAX:
-                can_move = False
+            if (self.rect.bottom + dy) > parada_segura_embaixo and self.rect.bottom <= PARADA_EMBAIXO_MAX:
+                pode_mover = False
 
-        if self.direction == 'up' and traffic_light_v.state != 'green':
+        if self.direcao == 'pra_cima' and traffic_light_v.estado != 'verde':
             # impede mover para dentro da área da faixa sul
-            if (self.rect.top + dy) < safe_stop_up and self.rect.top >= STOP_UP_MIN:
-                can_move = False
+            if (self.rect.top + dy) < parada_segura_cima and self.rect.top >= PARADA_CIMA_MIN:
+                pode_mover = False
 
-        if self.direction == 'right' and traffic_light_h.state != 'green':
+        if self.direcao == 'direita' and traffic_light_h.estado != 'verde':
             # impede mover para dentro da área da faixa oeste
-            if (self.rect.right + dx) > safe_stop_right and self.rect.right <= STOP_RIGHT_MAX:
-                can_move = False
+            if (self.rect.right + dx) > parada_segura_direita and self.rect.right <= PARADA_DIREITA_MAX:
+                pode_mover = False
 
-        if self.direction == 'left' and traffic_light_h.state != 'green':
+        if self.direcao == 'esquerda' and traffic_light_h.estado != 'verde':
             # impede mover para dentro da área da faixa leste
-            if (self.rect.left + dx) < safe_stop_left and self.rect.left >= STOP_LEFT_MIN:
-                can_move = False
+            if (self.rect.left + dx) < parada_segura_esquerda and self.rect.left >= PARADA_ESQUERDA_MIN:
+                pode_mover = False
 
         # bloqueio por pedestres: se houver pedestres atravessando impactando este eixo, bloqueia carros na área de fila
-        # vertical cars (up/down) são impactados por PED_BLOCK_V
-        if self.direction in ('up', 'down') and PED_BLOCK_V > 0:
-            if (self.direction == 'down' and (self.rect.bottom <= STOP_DOWN_MAX and self.rect.bottom > STOP_DOWN_MAX - QUEUE_LENGTH)) or \
-               (self.direction == 'up' and (self.rect.top >= STOP_UP_MIN and self.rect.top < STOP_UP_MIN + QUEUE_LENGTH)):
-                can_move = False
-        # horizontal cars (left/right) são impactados por PED_BLOCK_H
-        if self.direction in ('left', 'right') and PED_BLOCK_H > 0:
-            if (self.direction == 'right' and (self.rect.right <= STOP_RIGHT_MAX and self.rect.right > STOP_RIGHT_MAX - QUEUE_LENGTH)) or \
-               (self.direction == 'left' and (self.rect.left >= STOP_LEFT_MIN and self.rect.left < STOP_LEFT_MIN + QUEUE_LENGTH)):
-                can_move = False
+        # vertical cars (pra_cima/pra_baixo) são impactados por BLOQUEIO_PEDESTRES_VERT
+        if self.direcao in ('pra_cima', 'pra_baixo') and BLOQUEIO_PEDESTRES_VERT > 0:
+            if (self.direcao == 'pra_baixo' and (self.rect.bottom <= PARADA_EMBAIXO_MAX and self.rect.bottom > PARADA_EMBAIXO_MAX - COMPRIMENTO_FILA)) or \
+               (self.direcao == 'pra_cima' and (self.rect.top >= PARADA_CIMA_MIN and self.rect.top < PARADA_CIMA_MIN + COMPRIMENTO_FILA)):
+                pode_mover = False
+        # horizontal cars (left/right) são impactados por BLOQUEIO_PEDESTRES_HORI
+        if self.direcao in ('esquerda', 'direita') and BLOQUEIO_PEDESTRES_HORI > 0:
+            if (self.direcao == 'direita' and (self.rect.right <= PARADA_DIREITA_MAX and self.rect.right > PARADA_DIREITA_MAX - COMPRIMENTO_FILA)) or \
+               (self.direcao == 'esquerda' and (self.rect.left >= PARADA_ESQUERDA_MIN and self.rect.left < PARADA_ESQUERDA_MIN + COMPRIMENTO_FILA)):
+                pode_mover = False
 
         # checa colisão futura com outro carro (bloqueio)
-        next_rect = self.rect.move(dx, dy)
+        proxima_reta = self.rect.move(dx, dy)
         for other in cars_group:
             if other is self: continue
-            if next_rect.colliderect(other.rect):
-                can_move = False
+            if proxima_reta.colliderect(other.rect):
+                pode_mover = False
                 break
 
         # movimento
-        if can_move:
+        if pode_mover:
             self.rect.move_ip(dx, dy)
 
         # remove fora da tela
-        if not screen.get_rect().colliderect(self.rect):
+        if not tela.get_rect().colliderect(self.rect):
             # conta como saída antes de remover
-            cars_exited += 1
+            carros_saíram += 1
             self.kill()
 
-class Pedestrian(pygame.sprite.Sprite):
+class Pedestre(pygame.sprite.Sprite):
     """
     Pedestre atravessa exatamente na localização das faixas.
-    orientation:
-       'h_n' = faixa superior vertical (U)  -> atravessa horizontalmente (left -> right)
-       'h_s' = faixa inferior vertical (I)  -> atravessa horizontalmente (left -> right)
-       'v_r' = faixa direita horizontal (O)  -> atravessa verticalmente (top -> bottom)
-       'v_l' = faixa esquerda horizontal (P)-> atravessa verticalmente (top -> bottom)
+    orientacao:
+       'h_n' = faixa superior vertical (U)  -> atravessa horizontalmente (esquerda -> direita)
+       'h_s' = faixa inferior vertical (I)  -> atravessa horizontalmente (esquerda -> direita)
+       'v_r' = faixa direita horizontal (O)  -> atravessa verticalmente (em cima -> embaixo)
+       'v_l' = faixa esquerda horizontal (P)-> atravessa verticalmente (em cima -> embaixo)
     """
-    def __init__(self, orientation):
+    def __init__(self, orientacao):
         super().__init__()
-        self.orientation = orientation
-        self.speed = 1.6
-        self.waiting = True
-        self.crossing = False
+        self.orientacao = orientacao
+        self.velocidade = 1.6
+        self.esperando = True
+        self.atravessando = False
 
         # limites das vias (para garantir faixas só sobre as vias)
-        ROAD_X0, ROAD_X1 = 340, 460   # vertical: x-range da via
-        ROAD_Y0, ROAD_Y1 = 340, 460   # horizontal: y-range da via
+        ESTRADA_X0, ESTRADA_X1 = 340, 460   # vertical: x-range da via
+        ESTRADA_Y0, ESTRADA_Y1 = 340, 460   # horizontal: y-range da via
 
-        # spawn e target calculados com base nas constantes das faixas
-        if orientation == 'h_n':
-            y = (STOP_DOWN_MIN - CW_GAP - CW_THICKNESS) + CW_THICKNESS//2
-            self.pos = pygame.Vector2(ROAD_X0 - 30, y)
-            self.target = pygame.Vector2(ROAD_X1 + 30, y)
-            size = (10, 16)
-        elif orientation == 'h_s':
-            y = (STOP_UP_MIN + CW_GAP) + CW_THICKNESS//2
-            self.pos = pygame.Vector2(ROAD_X0 - 30, y)
-            self.target = pygame.Vector2(ROAD_X1 + 30, y)
-            size = (10, 16)
-        elif orientation == 'v_r':
-            x = (STOP_LEFT_MIN + CW_GAP) + CW_THICKNESS//2
-            self.pos = pygame.Vector2(x, ROAD_Y0 - 30)
-            self.target = pygame.Vector2(x, ROAD_Y1 + 30)
-            size = (16, 10)
+        # spawn e alvo calculados com base nas constantes das faixas
+        if orientacao == 'h_n':
+            y = (PARADA_EMBAIXO_MIN - CW_GAP - CW_THICKNESS) + CW_THICKNESS//2
+            self.pos = pygame.Vector2(ESTRADA_X0 - 30, y)
+            self.alvo = pygame.Vector2(ESTRADA_X1 + 30, y)
+            tamanho = (10, 16)
+        elif orientacao == 'h_s':
+            y = (PARADA_CIMA_MIN + CW_GAP) + CW_THICKNESS//2
+            self.pos = pygame.Vector2(ESTRADA_X0 - 30, y)
+            self.alvo = pygame.Vector2(ESTRADA_X1 + 30, y)
+            tamanho = (10, 16)
+        elif orientacao == 'v_r':
+            x = (PARADA_ESQUERDA_MIN + CW_GAP) + CW_THICKNESS//2
+            self.pos = pygame.Vector2(x, ESTRADA_Y0 - 30)
+            self.alvo = pygame.Vector2(x, ESTRADA_Y1 + 30)
+            tamanho = (16, 10)
         else:  # v_l
-            x = (STOP_RIGHT_MIN - CW_GAP - CW_THICKNESS) + CW_THICKNESS//2
-            self.pos = pygame.Vector2(x, ROAD_Y0 - 30)
-            self.target = pygame.Vector2(x, ROAD_Y1 + 30)
-            size = (16, 10)
+            x = (PARADA_DIREITA_MIN - CW_GAP - CW_THICKNESS) + CW_THICKNESS//2
+            self.pos = pygame.Vector2(x, ESTRADA_Y0 - 30)
+            self.alvo = pygame.Vector2(x, ESTRADA_Y1 + 30)
+            tamanho = (16, 10)
 
-        surf = pygame.Surface(size, pygame.SRCALPHA)
+        surf = pygame.Surface(tamanho, pygame.SRCALPHA)
         COLOR_PEDESTRIAN = (240, 128, 128)
         pygame.draw.ellipse(surf, COLOR_PEDESTRIAN, surf.get_rect())
         self.image = surf
         self.rect = self.image.get_rect(center=(int(self.pos.x), int(self.pos.y)))
 
-    def update(self, light_v, light_h):
-        # decide se pode iniciar travessia: somente quando o tráfego perpendicular estiver parado (red)
-        if self.waiting:
-            if self.orientation in ('h_n', 'h_s'):
+    def update(self, luz_vertical, luz_horizontal):
+        # decide se pode iniciar travessia: somente quando o tráfego perpendicular estiver parado (vermelho)
+        if self.esperando:
+            if self.orientacao in ('h_n', 'h_s'):
                 # precisam que a via vertical esteja RED para poderem atravessar (pois atravessam a via vertical)
-                if light_v.state == 'red':
-                    self.waiting = False
-                    self.crossing = True
+                if luz_vertical.estado == 'vermelho':
+                    self.esperando = False
+                    self.atravessando = True
             else:
-                # v_* atravessam a via horizontal, precisam que light_h seja red
-                if light_h.state == 'red':
-                    self.waiting = False
-                    self.crossing = True
+                # v_* atravessam a via horizontal, precisam que luz_horizontal seja vermelho
+                if luz_horizontal.estado == 'vermelho':
+                    self.esperando = False
+                    self.atravessando = True
 
-        if self.crossing:
-            # move em direção ao target
-            dir_vec = (self.target - self.pos)
+        if self.atravessando:
+            # move em direção ao alvo
+            dir_vec = (self.alvo - self.pos)
             if dir_vec.length() != 0:
-                move = dir_vec.normalize() * self.speed
+                move = dir_vec.normalize() * self.velocidade
                 # evita overshoot
                 if move.length() > dir_vec.length():
-                    self.pos = self.target
+                    self.pos = self.alvo
                 else:
                     self.pos += move
                 self.rect.center = (int(self.pos.x), int(self.pos.y))
 
             # fim da travessia -> remove
-            if (self.pos - self.target).length() < 2:
+            if (self.pos - self.alvo).length() < 2:
                 self.kill()
 
 # --- AGENTE INTELIGENTE (Sem alterações) ---
-class TrafficLightController:
-    def __init__(self, light_v, light_h):
-        self.light_v = light_v
-        self.light_h = light_h
-        self.fuzzy_brain = FuzzyController()
-        self.light_v.state = 'red'
-        self.light_h.state = 'green'
+class ControladorSemaforo:
+    def __init__(self, luz_vertical, luz_horizontal):
+        self.luz_vertical = luz_vertical
+        self.luz_horizontal = luz_horizontal
+        self.fuzzy_brain = FuzzyControlador()
+        self.luz_vertical.estado = 'vermelho'
+        self.luz_horizontal.estado = 'verde'
         self.timer = 0
         self.change_sequence = None
         self.last_priority_score = 0
@@ -645,34 +643,34 @@ class TrafficLightController:
         self._last_fuzzy_print_time = 0.0
         self._fuzzy_print_interval = 1.5  # segundos
 
-    def request_ped_cross(self, axis):
+    def requisicao_travessia_pedestre(self, axis):
         """
         Solicita ao controlador que prepare a troca para permitir travessia de pedestres.
         axis: 'v' -> pedestres que atravessam a via vertical (impactam tráfego vertical => precisamos RED em vertical)
               'h' -> pedestres que atravessam a via horizontal (impactam tráfego horizontal)
-        Isso inicia a sequência de amarelo para a via que estiver com green, garantindo que em poucos frames a via perpendicular fique vermelha.
+        Isso inicia a sequência de amarelo para a via que estiver com verde, garantindo que em poucos frames a via perpendicular fique vermelha.
         """
-        # se axis == 'v' queremos que a via vertical fique RED -> vertical red happens when horizontal turns green? 
+        # se axis == 'v' queremos que a via vertical fique RED -> vertical vermelho happens when horizontal turns verde? 
         # Implementação: se a via que atualmente está GREEN é a que atrapalha o pedestre, iniciamos amarelo nela para trocar.
         if axis == 'v':
             # pedestres atravessando horizontalmente (impactam tráfego vertical) =>
-            # precisamos que light_v fique red (ou seja, tornar vertical RED / horizontal GREEN).
-            if self.light_h.state == 'green' and not self.change_sequence:
-                self.light_h.state = 'yellow'
+            # precisamos que luz_vertical fique vermelho (ou seja, tornar vertical RED / horizontal GREEN).
+            if self.luz_horizontal.estado == 'verde' and not self.change_sequence:
+                self.luz_horizontal.estado = 'amarelo'
                 self.change_sequence = 'to_v'
                 self.timer = 0
         elif axis == 'h':
             # pedestres atravessando verticalmente (impactam tráfego horizontal) =>
-            # precisamos que light_h fique red (tornar horizontal RED / vertical GREEN)
-            if self.light_v.state == 'green' and not self.change_sequence:
-                self.light_v.state = 'yellow'
+            # precisamos que luz_horizontal fique vermelho (tornar horizontal RED / vertical GREEN)
+            if self.luz_vertical.estado == 'verde' and not self.change_sequence:
+                self.luz_vertical.estado = 'amarelo'
                 self.change_sequence = 'to_h'
                 self.timer = 0
 
-    def update(self, cars_v, cars_h, env=None, ped_waiting_total=0):
+    def update(self, cars_v, cars_h, ambiente=None, pedestres_esperando_total=0):
         """
         Atualiza semáforos.
-        Agora aceita 'env' (dicionário gerado por generate_random_environment) para cálculo
+        Agora aceita 'ambiente' (dicionário gerado por gerar_ambiente_aleatorio) para cálculo
         do tempo recomendado via lógica fuzzy estendida.
         """
         # incrementa timer (frames desde início do verde)
@@ -682,26 +680,26 @@ class TrafficLightController:
         if self.change_sequence:
             if self.timer > self.YELLOW_TIME:
                 if self.change_sequence == 'to_v':
-                    self.light_h.state = 'red'
-                    self.light_v.state = 'green'
+                    self.luz_horizontal.estado = 'vermelho'
+                    self.luz_vertical.estado = 'verde'
                 elif self.change_sequence == 'to_h':
-                    self.light_v.state = 'red'
-                    self.light_h.state = 'green'
+                    self.luz_vertical.estado = 'vermelho'
+                    self.luz_horizontal.estado = 'verde'
                 self.change_sequence = None
                 self.timer = 0
             return
 
         # calcula prioridade original (mantendo compatibilidade)
-        carros_na_vermelha = cars_v if self.light_h.state == 'green' else cars_h
+        carros_na_vermelha = cars_v if self.luz_horizontal.estado == 'verde' else cars_h
         tempo_verde_segundos = self.timer / FPS
-        priority, ativacoes = self.fuzzy_brain.compute_priority(carros_na_vermelha, tempo_verde_segundos)
-        self.last_priority_score = float(priority)
+        prioridade, ativacoes = self.fuzzy_brain.prioridade_de_computacao(carros_na_vermelha, tempo_verde_segundos)
+        self.last_priority_score = float(prioridade)
 
         # imprime ativações conforme antes
         now = time.time()
-        should_print = (now - self._last_fuzzy_print_time >= self._fuzzy_print_interval) or (priority >= 5.0)
+        should_print = (now - self._last_fuzzy_print_time >= self._fuzzy_print_interval) or (prioridade >= 5.0)
         if should_print:
-            print(f"[FUZZY-PRIOR] prioridade(defuzz)={priority:.2f} | entradas: carros_vermelha={carros_na_vermelha}, tempo_verde={tempo_verde_segundos:.2f}s, ped_esperando={ped_waiting_total}")
+            print(f"[FUZZY-PRIOR] prioridade(defuzz)={prioridade:.2f} | entradas: carros_vermelha={carros_na_vermelha}, tempo_verde={tempo_verde_segundos:.2f}s, ped_esperando={pedestres_esperando_total}")
             for desc, grau in ativacoes:
                 if grau > 0.01:
                     print(f"  - {desc} -> grau={grau:.3f}")
@@ -711,22 +709,22 @@ class TrafficLightController:
         # --- Cálculo do tempo recomendado a partir do ambiente (se fornecido) ---
         tempo_recomendado = None
         regra_ativacoes = None
-        if env is not None:
+        if ambiente is not None:
             try:
-                tempo_recomendado = self.fuzzy_brain.compute_tempo_from_env(env['car_flow'], env['ped_flow'], env['hora'], env['clima'])
+                tempo_recomendado = self.fuzzy_brain.calcular_tempo_a_partir_do_ambiente(ambiente['fluxo_de_carros'], ambiente['fluxo_de_pedestres'], ambiente['hora'], ambiente['clima'])
                 # guarda para exibição/debug
                 self.last_tempo_recomendado = float(tempo_recomendado)
                 # avalia regras e obtém graus
-                regra_ativacoes = self.fuzzy_brain.evaluate_rules(env['car_flow'], env['ped_flow'], env['hora'], env['clima'])
+                regra_ativacoes = self.fuzzy_brain.avaliar_regras(ambiente['fluxo_de_carros'], ambiente['fluxo_de_pedestres'], ambiente['hora'], ambiente['clima'])
             except Exception as e:
                 # não deve quebrar o loop de simulação
-                print("Erro compute_tempo_from_env:", e)
+                print("Erro calcular_tempo_a_partir_do_ambiente:", e)
                 tempo_recomendado = None
 
-        # imprime regras fuzzy do cálculo de tempo quando houver env (com throttle igual)
+        # imprime regras fuzzy do cálculo de tempo quando houver ambiente (com throttle igual)
         now = time.time()
         if regra_ativacoes is not None and (now - self._last_fuzzy_print_time >= self._fuzzy_print_interval):
-            print(f"[FUZZY-TEMPO] tempo_recomendado={tempo_recomendado:.2f}s | env: clima={env['clima']}, car_flow={env['car_flow']}, ped_flow={env['ped_flow']}, hora={env['hora']}")
+            print(f"[FUZZY-TEMPO] tempo_recomendado={tempo_recomendado:.2f}s | ambiente: clima={ambiente['clima']}, fluxo_de_carros={ambiente['fluxo_de_carros']}, fluxo_de_pedestres={ambiente['fluxo_de_pedestres']}, hora={ambiente['hora']}")
             for desc, grau in regra_ativacoes:
                 if grau > 0.01:
                     print(f"  - {desc} -> grau={grau:.3f}")
@@ -735,12 +733,12 @@ class TrafficLightController:
 
         # --- Decisão de troca (mantém lógica por prioridade) ---
         # se a prioridade fuzzy exigir troca, executa sequência
-        if priority >= 5.0:
-            if self.light_h.state == 'green':
-                self.light_h.state = 'yellow'
+        if prioridade >= 5.0:
+            if self.luz_horizontal.estado == 'verde':
+                self.luz_horizontal.estado = 'amarelo'
                 self.change_sequence = 'to_v'
             else:
-                self.light_v.state = 'yellow'
+                self.luz_vertical.estado = 'amarelo'
                 self.change_sequence = 'to_h'
             self.timer = 0
             return
@@ -748,27 +746,27 @@ class TrafficLightController:
         # adicional: se o tempo verde atual exceder o tempo recomendado (quando disponível), inicia troca
         if tempo_recomendado is not None:
             if tempo_verde_segundos >= tempo_recomendado:
-                if self.light_h.state == 'green':
-                    self.light_h.state = 'yellow'
+                if self.luz_horizontal.estado == 'verde':
+                    self.luz_horizontal.estado = 'amarelo'
                     self.change_sequence = 'to_v'
                 else:
-                    self.light_v.state = 'yellow'
+                    self.luz_vertical.estado = 'amarelo'
                     self.change_sequence = 'to_h'
                 self.timer = 0
 
 # --- AMBIENTE ---
-def draw_environment():
-    screen.fill(COLOR_GRAY)
-    pygame.draw.rect(screen, COLOR_DARK_GRAY, (350, 0, 100, SCREEN_HEIGHT))   # via vertical
-    pygame.draw.rect(screen, COLOR_DARK_GRAY, (0, 350, SCREEN_WIDTH, 100))    # via horizontal
+def desenho_ambiente():
+    tela.fill(COR_CINZA)
+    pygame.draw.rect(tela, COR_CINZA_ESCURO, (350, 0, 100, ALTURA_TELA))   # via vertical
+    pygame.draw.rect(tela, COR_CINZA_ESCURO, (0, 350, LARGURA_TELA, 100))    # via horizontal
 
     # linhas de divisão das vias (não desenhar dentro do quadrado do cruzamento)
-    for y in range(0, SCREEN_HEIGHT, 40):
+    for y in range(0, ALTURA_TELA, 40):
         if not 350 < y < 450:
-            pygame.draw.rect(screen, COLOR_WHITE, (395, y, 10, 20))
-    for x in range(0, SCREEN_WIDTH, 40):
+            pygame.draw.rect(tela, COR_BRANCA, (395, y, 10, 20))
+    for x in range(0, LARGURA_TELA, 40):
         if not 350 < x < 450:
-            pygame.draw.rect(screen, COLOR_WHITE, (x, 395, 20, 10))
+            pygame.draw.rect(tela, COR_BRANCA, (x, 395, 20, 10))
 
     # --- Faixas de pedestre restritas às vias, um pouco antes do cruzamento ---
     # usa a constante global CW_THICKNESS para espessura (agora maior)
@@ -779,119 +777,119 @@ def draw_environment():
     cw_gap = CW_GAP      # distância da linha de parada/área de stop
 
     # limites das vias (para garantir faixas só sobre as vias)
-    road_x0, road_x1 = 350, 450   # vertical: x-range da via
-    road_y0, road_y1 = 350, 450   # horizontal: y-range da via
+    estrada_x0, estrada_x1 = 350, 450   # vertical: x-range da via
+    estrada_y0, estrada_y1 = 350, 450   # horizontal: y-range da via
 
     # -- Faixas para a via vertical (listras HORIZONTAIS atravessando a via vertical) --
-    x_start = road_x0 + stripe_margin
-    x_end = road_x1 - stripe_margin
+    x_start = estrada_x0 + stripe_margin
+    x_end = estrada_x1 - stripe_margin
 
-    # norte: antes do cruzamento (para quem vem de cima -> 'down')
-    north_y = STOP_DOWN_MIN - cw_gap - cw_thickness
+    # norte: antes do cruzamento (para quem vem de cima -> 'pra_baixo')
+    north_y = PARADA_EMBAIXO_MIN - cw_gap - cw_thickness
     for x in range(x_start, x_end, stripe_w + stripe_gap):
-        pygame.draw.rect(screen, COLOR_WHITE, (x, north_y, stripe_w, cw_thickness))
+        pygame.draw.rect(tela, COR_BRANCA, (x, north_y, stripe_w, cw_thickness))
 
-    # sul: antes do cruzamento (para quem vem de baixo -> 'up')
-    south_y = STOP_UP_MIN + cw_gap
+    # sul: antes do cruzamento (para quem vem de baixo -> 'pra_cima')
+    south_y = PARADA_CIMA_MIN + cw_gap
     for x in range(x_start, x_end, stripe_w + stripe_gap):
-        pygame.draw.rect(screen, COLOR_WHITE, (x, south_y, stripe_w, cw_thickness))
+        pygame.draw.rect(tela, COR_BRANCA, (x, south_y, stripe_w, cw_thickness))
 
     # -- Faixas para a via horizontal (listras VERTICAIS atravessando a via horizontal) --
-    y_start = road_y0 + stripe_margin
-    y_end = road_y1 - stripe_margin
+    y_start = estrada_y0 + stripe_margin
+    y_end = estrada_y1 - stripe_margin
 
-    # oeste: antes do cruzamento (para quem vem da esquerda -> 'right')
-    left_x = STOP_RIGHT_MIN - cw_gap - cw_thickness
+    # oeste: antes do cruzamento (para quem vem da esquerda -> 'direita')
+    left_x = PARADA_DIREITA_MIN - cw_gap - cw_thickness
     for y in range(y_start, y_end, stripe_w + stripe_gap):
-        pygame.draw.rect(screen, COLOR_WHITE, (left_x, y, cw_thickness, stripe_w))
+        pygame.draw.rect(tela, COR_BRANCA, (left_x, y, cw_thickness, stripe_w))
 
-    # leste: antes do cruzamento (para quem vem da direita -> 'left')
-    right_x = STOP_LEFT_MIN + cw_gap
+    # leste: antes do cruzamento (para quem vem da direita -> 'esquerda')
+    right_x = PARADA_ESQUERDA_MIN + cw_gap
     for y in range(y_start, y_end, stripe_w + stripe_gap):
-        pygame.draw.rect(screen, COLOR_WHITE, (right_x, y, cw_thickness, stripe_w))
+        pygame.draw.rect(tela, COR_BRANCA, (right_x, y, cw_thickness, stripe_w))
 
 # Função auxiliar para detectar se um carro está "esperando"
-def car_is_waiting(car, all_cars, controller):
+def carros_esperando(car, todos_carros, controlador):
     # calcula próximo rect (mesma lógica do update)
-    dx = (1 if car.direction == 'right' else -1 if car.direction == 'left' else 0) * car.speed
-    dy = (1 if car.direction == 'down' else -1 if car.direction == 'up' else 0) * car.speed
-    next_rect = car.rect.move(dx, dy)
+    dx = (1 if car.direcao == 'direita' else -1 if car.direcao == 'esquerda' else 0) * car.velocidade
+    dy = (1 if car.direcao == 'pra_baixo' else -1 if car.direcao == 'pra_cima' else 0) * car.velocidade
+    proxima_reta = car.rect.move(dx, dy)
 
     # bloqueio por colisão imediata (outro carro à frente)
-    blocked_by_car = False
-    for other in all_cars:
+    bloqueador_por_carro = False
+    for other in todos_carros:
         if other is car: continue
-        if next_rect.colliderect(other.rect):
-            blocked_by_car = True
+        if proxima_reta.colliderect(other.rect):
+            bloqueador_por_carro = True
             break
 
     # define área de fila (zona mais longa que a linha de parada)
-    if car.direction == 'down':
-        in_queue = (car.rect.bottom <= STOP_DOWN_MAX) and (car.rect.bottom > STOP_DOWN_MAX - QUEUE_LENGTH)
-        light_red = controller.light_v.state != 'green'
-    elif car.direction == 'up':
-        in_queue = (car.rect.top >= STOP_UP_MIN) and (car.rect.top < STOP_UP_MIN + QUEUE_LENGTH)
-        light_red = controller.light_v.state != 'green'
-    elif car.direction == 'right':
-        in_queue = (car.rect.right <= STOP_RIGHT_MAX) and (car.rect.right > STOP_RIGHT_MAX - QUEUE_LENGTH)
-        light_red = controller.light_h.state != 'green'
+    if car.direcao == 'pra_baixo':
+        na_fila = (car.rect.bottom <= PARADA_EMBAIXO_MAX) and (car.rect.bottom > PARADA_EMBAIXO_MAX - COMPRIMENTO_FILA)
+        luz_vermelha = controlador.luz_vertical.estado != 'verde'
+    elif car.direcao == 'pra_cima':
+        na_fila = (car.rect.top >= PARADA_CIMA_MIN) and (car.rect.top < PARADA_CIMA_MIN + COMPRIMENTO_FILA)
+        luz_vermelha = controlador.luz_vertical.estado != 'verde'
+    elif car.direcao == 'direita':
+        na_fila = (car.rect.right <= PARADA_DIREITA_MAX) and (car.rect.right > PARADA_DIREITA_MAX - COMPRIMENTO_FILA)
+        luz_vermelha = controlador.luz_horizontal.estado != 'verde'
     else:  # left
-        in_queue = (car.rect.left >= STOP_LEFT_MIN) and (car.rect.left < STOP_LEFT_MIN + QUEUE_LENGTH)
-        light_red = controller.light_h.state != 'green'
+        na_fila = (car.rect.left >= PARADA_ESQUERDA_MIN) and (car.rect.left < PARADA_ESQUERDA_MIN + COMPRIMENTO_FILA)
+        luz_vermelha = controlador.luz_horizontal.estado != 'verde'
 
     # conta se está na área de fila e ou o semáforo está vermelho ou está bloqueado por outro carro
-    return in_queue and (light_red or blocked_by_car)
+    return na_fila and (luz_vermelha or bloqueador_por_carro)
 
 # --- FUNÇÃO MAIN() - MODIFICADA ---
 def main():
-    global total_spawned, PED_BLOCK_V, PED_BLOCK_H
-    light_v = TrafficLight(300, 150, 'vertical')
-    light_h = TrafficLight(150, 300, 'horizontal')
-    controller = TrafficLightController(light_v, light_h)
-    all_cars = pygame.sprite.Group()
-    all_pedestrians = pygame.sprite.Group()
+    global total_gerado, BLOQUEIO_PEDESTRES_VERT, BLOQUEIO_PEDESTRES_HORI
+    luz_vertical = Semaforo(300, 150, 'vertical')
+    luz_horizontal = Semaforo(150, 300, 'horizontal')
+    controlador = ControladorSemaforo(luz_vertical, luz_horizontal)
+    todos_carros = pygame.sprite.Group()
+    todos_pedestres = pygame.sprite.Group()
 
     # Variáveis para alternar o lado do spawn manual
-    horizontal_spawn_side = 'left'  # O próximo carro 'h' virá da esquerda
+    lado_de_spawn_horizontal = 'esquerda'  # O próximo carro 'h' virá da esquerda
     vertical_spawn_side = 'top'    # O próximo carro 'v' virá de cima
 
     # logging CSV: cria arquivo e escreve header se necessário
-    write_header = not METRICS_FILE.exists()
-    metrics_f = open(METRICS_FILE, "a", newline="", encoding="utf-8")
-    metrics_writer = csv.writer(metrics_f)
-    if write_header:
-        metrics_writer.writerow(["timestamp", "sim_time_s", "cars_alive", "total_spawned", "cars_exited", "waiting_v", "waiting_h", "ped_waiting", "priority"])
-        metrics_f.flush()
+    metricas_cabecalho = not ARQUIVOS_METRICAS.exists()
+    metricas_f = open(ARQUIVOS_METRICAS, "a", newline="", encoding="utf-8")
+    metricas_escrever = csv.writer(metricas_f)
+    if metricas_cabecalho:
+        metricas_escrever.writerow(["timestamp", "sim_time_s", "carros_via", "total_gerado", "carros_saíram", "esperando_vertical", "esperando_horizontal", "pedestres_esperando", "prioridade"])
+        metricas_f.flush()
 
     sim_time = 0.0
     LOG_INTERVAL = 1.0
-    last_log = 0.0
+    ultimo_registro = 0.0
 
     # ambiente inicial e controle de refresh
-    env = generate_random_environment()
-    ENV_REFRESH_INTERVAL = 30.0 # Teste com 30 segundos  # segundos (1 minuto) para regenerar variáveis ambientais aleatórias
-    last_env_update = 0.0
+    ambiente = gerar_ambiente_aleatorio()
+    INTERVALO_ATUALIZACAO_AMBIENTE = 30.0 # Teste com 30 segundos  # segundos (1 minuto) para regenerar variáveis ambientais aleatórias
+    ultima_atualizacao_ambiente = 0.0
 
     # alerta visual quando o ambiente muda
-    env_alert_start = None
-    ENV_ALERT_DURATION = 3.0  # segundos que o alerta permanece visível
+    alerta_comeco_ambiente = None
+    ALERTA_ALTERACAO_AMBIENTE = 3.0  # segundos que o alerta permanece visível
     env_alert_text = ""
 
     try:
         while True:
             # controla dt e tempo simulado (usado para logging)
-            dt_ms = clock.tick(FPS)
+            dt_ms = tempo.tick(FPS)
             dt = dt_ms / 1000.0
             sim_time += dt
 
             # atualiza ambiente aleatório periodicamente
-            if sim_time - last_env_update >= ENV_REFRESH_INTERVAL:
-                new_env = generate_random_environment()
-                env = new_env
-                last_env_update = sim_time
+            if sim_time - ultima_atualizacao_ambiente >= INTERVALO_ATUALIZACAO_AMBIENTE:
+                new_env = gerar_ambiente_aleatorio()
+                ambiente = new_env
+                ultima_atualizacao_ambiente = sim_time
                 # registra alerta para exibição na tela
-                env_alert_text = f"Ambiente alterado: {env['clima']} | Carros: {env['car_flow']} | Pedestres: {env['ped_flow']} | Hora: {env['hora']}"
-                env_alert_start = sim_time
+                env_alert_text = f"Ambiente alterado: {ambiente['clima']} | Carros: {ambiente['fluxo_de_carros']} | Pedestres: {ambiente['fluxo_de_pedestres']} | Hora: {ambiente['hora']}"
+                alerta_comeco_ambiente = sim_time
 
             # Loop de eventos (apenas QUIT / ESC)
             for event in pygame.event.get():
@@ -900,162 +898,162 @@ def main():
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                     raise KeyboardInterrupt
 
-            # --- SPAWN AUTOMÁTICO ALEATÓRIO (substitui spawn manual por teclas) ---
+            # --- SPAWN AUTOMÁTICO ALEATÓRIO ---
             # taxas base (por segundo)
-            base_car_spawn_h = 0.6   # base carros por segundo na via horizontal
-            base_car_spawn_v = 0.6   # base carros por segundo na via vertical
-            base_ped_spawn_each = 0.06  # base probabilidade por segundo por faixa (cada uma das 4)
+            base_spam_carros_horizontal = 0.6   # base carros por segundo na via horizontal
+            base_spam_carros_vertical = 0.6   # base carros por segundo na via vertical
+            base_spam_pedestres_cada = 0.06  # base probabilidade por segundo por faixa (cada uma das 4)
 
             # aplica multiplicadores gerados pelo "fluxo" do ambiente
-            car_multiplier = CAR_FLOW_MULT.get(env["car_flow"], 1.0)
-            ped_multiplier = PED_FLOW_MULT.get(env["ped_flow"], 1.0)
+            carros_multiplicadores = FLUXO_CARROS_MULTIPLOS.get(ambiente["fluxo_de_carros"], 1.0)
+            pedestres_multiplicadores = FLUXO_PEDESTRES_MULTIPLOS.get(ambiente["fluxo_de_pedestres"], 1.0)
 
-            car_spawn_rate_h = base_car_spawn_h * car_multiplier
-            car_spawn_rate_v = base_car_spawn_v * car_multiplier
-            ped_spawn_rate_each = base_ped_spawn_each * ped_multiplier
+            taxa_geracao_carros_horizontal = base_spam_carros_horizontal * carros_multiplicadores
+            taxa_geracao_carros_vertical = base_spam_carros_vertical * carros_multiplicadores
+            taxa_geracao_pedestres_cada = base_spam_pedestres_cada * pedestres_multiplicadores
 
             # carros horizontais (alterna lado de spawn)
-            if random.random() < car_spawn_rate_h * dt:
-                if horizontal_spawn_side == 'left':
-                    c = Car(-40, 370, 'right')  # vem da esquerda
-                    horizontal_spawn_side = 'right'
+            if random.random() < taxa_geracao_carros_horizontal * dt:
+                if lado_de_spawn_horizontal == 'esquerda':
+                    c = Carro(-40, 370, 'direita')  # vem da esquerda
+                    lado_de_spawn_horizontal = 'direita'
                 else:
-                    c = Car(SCREEN_WIDTH, 410, 'left')  # vem da direita
-                    horizontal_spawn_side = 'left'
-                all_cars.add(c)
-                total_spawned += 1
+                    c = Carro(LARGURA_TELA, 410, 'esquerda')  # vem da direita
+                    lado_de_spawn_horizontal = 'esquerda'
+                todos_carros.add(c)
+                total_gerado += 1
 
             # carros verticais (alterna topo/baixo)
-            if random.random() < car_spawn_rate_v * dt:
+            if random.random() < taxa_geracao_carros_vertical * dt:
                 if vertical_spawn_side == 'top':
-                    c = Car(370, -40, 'down')  # vem de cima
+                    c = Carro(370, -40, 'pra_baixo')  # vem de cima
                     vertical_spawn_side = 'bottom'
                 else:
-                    c = Car(410, SCREEN_HEIGHT, 'up')  # vem de baixo
+                    c = Carro(410, ALTURA_TELA, 'pra_cima')  # vem de baixo
                     vertical_spawn_side = 'top'
-                all_cars.add(c)
-                total_spawned += 1
+                todos_carros.add(c)
+                total_gerado += 1
 
             # pedestres — cada faixa tem sua chance
-            if random.random() < ped_spawn_rate_each * dt:
-                all_pedestrians.add(Pedestrian('h_n'))
-                controller.request_ped_cross('h')
-            if random.random() < ped_spawn_rate_each * dt:
-                all_pedestrians.add(Pedestrian('h_s'))
-                controller.request_ped_cross('h')
-            if random.random() < ped_spawn_rate_each * dt:
-                all_pedestrians.add(Pedestrian('v_r'))
-                controller.request_ped_cross('v')
-            if random.random() < ped_spawn_rate_each * dt:
-                all_pedestrians.add(Pedestrian('v_l'))
-                controller.request_ped_cross('v')
+            if random.random() < taxa_geracao_pedestres_cada * dt:
+                todos_pedestres.add(Pedestre('h_n'))
+                controlador.requisicao_travessia_pedestre('h')
+            if random.random() < taxa_geracao_pedestres_cada * dt:
+                todos_pedestres.add(Pedestre('h_s'))
+                controlador.requisicao_travessia_pedestre('h')
+            if random.random() < taxa_geracao_pedestres_cada * dt:
+                todos_pedestres.add(Pedestre('v_r'))
+                controlador.requisicao_travessia_pedestre('v')
+            if random.random() < taxa_geracao_pedestres_cada * dt:
+                todos_pedestres.add(Pedestre('v_l'))
+                controlador.requisicao_travessia_pedestre('v')
 
             # --- PERCEPÇÃO DO AGENTE (SENSORES) ---
             # conta carros em fila por eixo
-            cars_waiting_v = 0
-            cars_waiting_h = 0
-            for car in all_cars:
-                if car_is_waiting(car, all_cars, controller):
-                    if car.direction in ('down', 'up'):
-                        cars_waiting_v += 1
+            carros_esperando_vertical = 0
+            carros_esperando_horizontal = 0
+            for car in todos_carros:
+                if carros_esperando(car, todos_carros, controlador):
+                    if car.direcao in ('pra_baixo', 'pra_cima'):
+                        carros_esperando_vertical += 1
                     else:
-                        cars_waiting_h += 1
+                        carros_esperando_horizontal += 1
 
             # atualiza pedestres (decidem iniciar travessia) e conta esperando / atravessando
-            ped_waiting_total = 0
-            ped_crossing_v = 0  # pedestres atravessando sobre a via vertical (impactam tráfego vertical)
-            ped_crossing_h = 0  # pedestres atravessando sobre a via horizontal (impactam tráfego horizontal)
+            pedestres_esperando_total = 0
+            pedestres_atravessando_vertical = 0  # pedestres atravessando sobre a via vertical (impactam tráfego vertical)
+            pedestres_atravessando_horizontal = 0  # pedestres atravessando sobre a via horizontal (impactam tráfego horizontal)
 
-            # atualiza estado dos pedestres (move quem já está crossing)
-            for ped in list(all_pedestrians):
-                ped.update(light_v, light_h)
+            # atualiza estado dos pedestres (move quem já está atravessando)
+            for ped in list(todos_pedestres):
+                ped.update(luz_vertical, luz_horizontal)
 
             # computa contagens após update
-            for ped in all_pedestrians:
-                if ped.waiting:
-                    ped_waiting_total += 1
-                if ped.crossing:
-                    if ped.orientation in ('h_n', 'h_s'):
-                        ped_crossing_v += 1
+            for ped in todos_pedestres:
+                if ped.esperando:
+                    pedestres_esperando_total += 1
+                if ped.atravessando:
+                    if ped.orientacao in ('h_n', 'h_s'):
+                        pedestres_atravessando_vertical += 1
                     else:
-                        ped_crossing_h += 1
+                        pedestres_atravessando_horizontal += 1
 
             # atualiza flags globais que bloqueiam carros nas áreas de fila
-            PED_BLOCK_V = ped_crossing_v
-            PED_BLOCK_H = ped_crossing_h
+            BLOQUEIO_PEDESTRES_VERT = pedestres_atravessando_vertical
+            BLOQUEIO_PEDESTRES_HORI = pedestres_atravessando_horizontal
 
             # atualiza controlador com as contagens de carros esperando
-            controller.update(cars_waiting_v, cars_waiting_h, env=env, ped_waiting_total=ped_waiting_total)
+            controlador.update(carros_esperando_vertical, carros_esperando_horizontal, ambiente=ambiente, pedestres_esperando_total=pedestres_esperando_total)
 
             # --- Atualiza movimento dos carros (depois de avaliar bloqueios por pedestres) ---
-            all_cars.update(all_cars, light_v, light_h)
+            todos_carros.update(todos_carros, luz_vertical, luz_horizontal)
 
             # --- DESENHO ---
-            draw_environment()
-            all_cars.draw(screen)
-            all_pedestrians.draw(screen)
-            light_v.draw()
-            light_h.draw()
+            desenho_ambiente()
+            todos_carros.draw(tela)
+            todos_pedestres.draw(tela)
+            luz_vertical.draw()
+            luz_horizontal.draw()
 
             # textos informativos
-            info_v = font.render(f"Carros esperando na Vertical: {cars_waiting_v}", True, COLOR_BLACK)
-            info_h = font.render(f"Carros esperando na Horizontal: {cars_waiting_h}", True, COLOR_BLACK)
-            ped_info = font.render(f"Pedestres esperando: {ped_waiting_total} | atravessando V:{ped_crossing_v} H:{ped_crossing_h}", True, COLOR_BLACK)
-            priority_text = font.render(f"Prioridade (Fuzzy): {controller.last_priority_score:.2f}", True, COLOR_BLACK)
+            info_v = fonte.render(f"Carros esperando na Vertical: {carros_esperando_vertical}", True, COR_PRETA)
+            info_h = fonte.render(f"Carros esperando na Horizontal: {carros_esperando_horizontal}", True, COR_PRETA)
+            ped_info = fonte.render(f"Pedestres esperando: {pedestres_esperando_total} | atravessando V:{pedestres_atravessando_vertical} H:{pedestres_atravessando_horizontal}", True, COR_PRETA)
+            priority_text = fonte.render(f"Prioridade (Fuzzy): {controlador.last_priority_score:.2f}", True, COR_PRETA)
 
             # exibe variáveis aleatórias do ambiente
-            env_clima = font.render(f"Clima: {env['clima']}", True, COLOR_BLACK)
-            env_carflow = font.render(f"Fluxo Carros: {env['car_flow']}", True, COLOR_BLACK)
-            env_pedflow = font.render(f"Fluxo Pedestres: {env['ped_flow']}", True, COLOR_BLACK)
-            env_hora = font.render(f"Horário: {env['hora']}", True, COLOR_BLACK)
+            ambiente_clima = fonte.render(f"Clima: {ambiente['clima']}", True, COR_PRETA)
+            ambiente_fluxo_carros = fonte.render(f"Fluxo Carros: {ambiente['fluxo_de_carros']}", True, COR_PRETA)
+            ambiente_fluxo_pedestres = fonte.render(f"Fluxo Pedestres: {ambiente['fluxo_de_pedestres']}", True, COR_PRETA)
+            ambiente_hora = fonte.render(f"Horário: {ambiente['hora']}", True, COR_PRETA)
 
-            screen.blit(info_v, (10, 10))
-            screen.blit(info_h, (10, 35))
-            screen.blit(ped_info, (10, 60))
-            screen.blit(priority_text, (SCREEN_WIDTH // 2 - priority_text.get_width() // 2, 10))
+            tela.blit(info_v, (10, 10))
+            tela.blit(info_h, (10, 35))
+            tela.blit(ped_info, (10, 60))
+            tela.blit(priority_text, (LARGURA_TELA // 2 - priority_text.get_width() // 2, 10))
 
             # posição de exibição das variáveis ambientais (canto superior direito)
-            x_off = SCREEN_WIDTH - 10
-            screen.blit(env_clima, (x_off - env_clima.get_width(), 10))
-            screen.blit(env_carflow, (x_off - env_carflow.get_width(), 10 + env_clima.get_height() + 4))
-            screen.blit(env_pedflow, (x_off - env_pedflow.get_width(), 10 + env_clima.get_height() + env_carflow.get_height() + 8))
-            screen.blit(env_hora, (x_off - env_hora.get_width(), 10 + env_clima.get_height() + env_carflow.get_height() + env_pedflow.get_height() + 12))
+            x_off = LARGURA_TELA - 10
+            tela.blit(ambiente_clima, (x_off - ambiente_clima.get_width(), 10))
+            tela.blit(ambiente_fluxo_carros, (x_off - ambiente_fluxo_carros.get_width(), 10 + ambiente_clima.get_height() + 4))
+            tela.blit(ambiente_fluxo_pedestres, (x_off - ambiente_fluxo_pedestres.get_width(), 10 + ambiente_clima.get_height() + ambiente_fluxo_carros.get_height() + 8))
+            tela.blit(ambiente_hora, (x_off - ambiente_hora.get_width(), 10 + ambiente_clima.get_height() + ambiente_fluxo_carros.get_height() + ambiente_fluxo_pedestres.get_height() + 12))
 
             # --- Desenha alerta de alteração de ambiente (se ativo) ---
-            if env_alert_start is not None:
-                elapsed = sim_time - env_alert_start
-                if elapsed <= ENV_ALERT_DURATION:
+            if alerta_comeco_ambiente is not None:
+                decorrido = sim_time - alerta_comeco_ambiente
+                if decorrido <= ALERTA_ALTERACAO_AMBIENTE:
                     # quebra o texto em linhas para evitar overflow
                     wrap_width = 56
                     lines = textwrap.wrap(env_alert_text, wrap_width)
                     # calcula dimensões do overlay conforme o maior texto
-                    overlay_w = max((font.size(line)[0] for line in lines), default=200) + 40
-                    overlay_h = len(lines) * font.get_linesize() + 24
+                    overlay_w = max((fonte.tamanho(line)[0] for line in lines), default=200) + 40
+                    overlay_h = len(lines) * fonte.get_linesize() + 24
                     overlay_s = pygame.Surface((overlay_w, overlay_h), pygame.SRCALPHA)
                     overlay_s.fill((20, 20, 20, 220))  # fundo escuro translúcido
-                    ox = SCREEN_WIDTH // 2 - overlay_w // 2
+                    ox = LARGURA_TELA // 2 - overlay_w // 2
                     oy = 80
-                    screen.blit(overlay_s, (ox, oy))
+                    tela.blit(overlay_s, (ox, oy))
                     # desenha linhas centradas
                     for i, line in enumerate(lines):
-                        line_surf = font.render(line, True, (255, 255, 255))
-                        screen.blit(line_surf, (SCREEN_WIDTH // 2 - line_surf.get_width() // 2, oy + 12 + i * font.get_linesize()))
+                        line_surf = fonte.render(line, True, (255, 255, 255))
+                        tela.blit(line_surf, (LARGURA_TELA // 2 - line_surf.get_width() // 2, oy + 12 + i * fonte.get_linesize()))
                 else:
-                    env_alert_start = None
+                    alerta_comeco_ambiente = None
 
             pygame.display.flip()
 
             # grava métricas a cada LOG_INTERVAL segundos
-            if sim_time - last_log >= LOG_INTERVAL:
+            if sim_time - ultimo_registro >= LOG_INTERVAL:
                 timestamp = time.time()
-                cars_alive = len(all_cars)
-                metrics_writer.writerow([timestamp, f"{sim_time:.2f}", cars_alive, total_spawned, cars_exited, cars_waiting_v, cars_waiting_h, ped_waiting_total, f"{controller.last_priority_score:.2f}"])
-                metrics_f.flush()
-                last_log = sim_time
+                carros_via = len(todos_carros)
+                metricas_escrever.writerow([timestamp, f"{sim_time:.2f}", carros_via, total_gerado, carros_saíram, carros_esperando_vertical, carros_esperando_horizontal, pedestres_esperando_total, f"{controlador.last_priority_score:.2f}"])
+                metricas_f.flush()
+                ultimo_registro = sim_time
 
     except KeyboardInterrupt:
         # encerra limpo
-        metrics_f.close()
+        metricas_f.close()
         pygame.quit()
         sys.exit()
 
@@ -1063,7 +1061,7 @@ if __name__ == '__main__':
     main()
 
 # --- PEDRESTES ---
-class Pedestrian(pygame.sprite.Sprite):
+class Pedestre(pygame.sprite.Sprite):
     """
     Pedestre atravessa sobre as faixas; orientations:
      - 'h_n' = faixa superior vertical (U)  -> atravessa horizontalmente (left -> right)
@@ -1071,69 +1069,69 @@ class Pedestrian(pygame.sprite.Sprite):
      - 'v_r' = faixa direita horizontal (O) -> atravessa verticalmente (top -> bottom)
      - 'v_l' = faixa esquerda horizontal (P)-> atravessa verticalmente (top -> bottom)
     """
-    def __init__(self, orientation):
+    def __init__(self, orientacao):
         super().__init__()
-        self.orientation = orientation
-        self.speed = 1.6
-        self.waiting = True
-        self.crossing = False
+        self.orientacao = orientacao
+        self.velocidade = 1.6
+        self.esperando = True
+        self.atravessando = False
 
         # limites das vias (para garantir faixas só sobre as vias)
-        road_x0, road_x1 = 340, 460   # vertical: x-range da via
-        road_y0, road_y1 = 340, 460   # horizontal: y-range da via
+        estrada_x0, estrada_x1 = 340, 460   # vertical: x-range da via
+        estrada_y0, estrada_y1 = 340, 460   # horizontal: y-range da via
 
-        # spawn/target com base nos STOP_* e constantes de faixa
-        if orientation == 'h_n':
-            y = STOP_DOWN_MIN - CW_GAP - CW_THICKNESS + CW_THICKNESS // 2
-            self.pos = pygame.Vector2(road_x0 - 30, y)
-            self.target = pygame.Vector2(road_x1 + 30, y)
-            size = (10, 16)
-        elif orientation == 'h_s':
-            y = STOP_UP_MIN + CW_GAP + CW_THICKNESS // 2
-            self.pos = pygame.Vector2(road_x0 - 30, y)
-            self.target = pygame.Vector2(road_x1 + 30, y)
-            size = (10, 16)
-        elif orientation == 'v_r':
-            x = STOP_LEFT_MIN + CW_GAP + CW_THICKNESS // 2
-            self.pos = pygame.Vector2(x, road_y0 - 30)
-            self.target = pygame.Vector2(x, road_y1 + 30)
-            size = (16, 10)
+        # spawn/alvo com base nos STOP_* e constantes de faixa
+        if orientacao == 'h_n':
+            y = PARADA_EMBAIXO_MIN - CW_GAP - CW_THICKNESS + CW_THICKNESS // 2
+            self.pos = pygame.Vector2(estrada_x0 - 30, y)
+            self.alvo = pygame.Vector2(estrada_x1 + 30, y)
+            tamanho = (10, 16)
+        elif orientacao == 'h_s':
+            y = PARADA_CIMA_MIN + CW_GAP + CW_THICKNESS // 2
+            self.pos = pygame.Vector2(estrada_x0 - 30, y)
+            self.alvo = pygame.Vector2(estrada_x1 + 30, y)
+            tamanho = (10, 16)
+        elif orientacao == 'v_r':
+            x = PARADA_ESQUERDA_MIN + CW_GAP + CW_THICKNESS // 2
+            self.pos = pygame.Vector2(x, estrada_y0 - 30)
+            self.alvo = pygame.Vector2(x, estrada_y1 + 30)
+            tamanho = (16, 10)
         else:  # v_l
-            x = STOP_RIGHT_MIN - CW_GAP - CW_THICKNESS + CW_THICKNESS // 2
-            self.pos = pygame.Vector2(x, road_y0 - 30)
-            self.target = pygame.Vector2(x, road_y1 + 30)
-            size = (16, 10)
+            x = PARADA_DIREITA_MIN - CW_GAP - CW_THICKNESS + CW_THICKNESS // 2
+            self.pos = pygame.Vector2(x, estrada_y0 - 30)
+            self.alvo = pygame.Vector2(x, estrada_y1 + 30)
+            tamanho = (16, 10)
 
-        surf = pygame.Surface(size, pygame.SRCALPHA)
+        surf = pygame.Surface(tamanho, pygame.SRCALPHA)
         pygame.draw.ellipse(surf, (240,128,128), surf.get_rect())
         self.image = surf
         self.rect = self.image.get_rect(center=(int(self.pos.x), int(self.pos.y)))
 
-    def update(self, light_v, light_h):
+    def update(self, luz_vertical, luz_horizontal):
         # decide se pode iniciar travessia: somente quando o tráfego PERPENDICULAR estiver RED
-        if self.waiting:
-            if self.orientation in ('h_n', 'h_s'):
-                # esses atravessam a via vertical -> precisam que light_v seja RED
-                if light_v.state == 'red':
-                    self.waiting = False
-                    self.crossing = True
+        if self.esperando:
+            if self.orientacao in ('h_n', 'h_s'):
+                # esses atravessam a via vertical -> precisam que luz_vertical seja RED
+                if luz_vertical.estado == 'vermelho':
+                    self.esperando = False
+                    self.atravessando = True
             else:
-                # atravessam a via horizontal -> precisam que light_h seja RED
-                if light_h.state == 'red':
-                    self.waiting = False
-                    self.crossing = True
+                # atravessam a via horizontal -> precisam que luz_horizontal seja RED
+                if luz_horizontal.estado == 'vermelho':
+                    self.esperando = False
+                    self.atravessando = True
 
-        if self.crossing:
-            # move em direção ao target
-            dir_vec = (self.target - self.pos)
+        if self.atravessando:
+            # move em direção ao alvo
+            dir_vec = (self.alvo - self.pos)
             if dir_vec.length() != 0:
-                move = dir_vec.normalize() * self.speed
+                move = dir_vec.normalize() * self.velocidade
                 if move.length() > dir_vec.length():
-                    self.pos = self.target
+                    self.pos = self.alvo
                 else:
                     self.pos += move
                 self.rect.center = (int(self.pos.x), int(self.pos.y))
 
             # remove ao terminar travessia
-            if (self.pos - self.target).length() < 2:
+            if (self.pos - self.alvo).length() < 2:
                 self.kill()
