@@ -72,11 +72,10 @@ tempo = pygame.time.Clock()
 FPS = 60
 
 # Zonas de parada (ajustadas e separadas por direção)
-PARADA_EMBAIXO_MIN, PARADA_EMBAIXO_MAX = 320, 360   # vindo de cima 
-PARADA_CIMA_MIN, PARADA_CIMA_MAX = 440, 480   # vindo de baixo 
-PARADA_DIREITA_MIN, PARADA_DIREITA_MAX = 320, 360   # vindo da esquerda 
-PARADA_ESQUERDA_MIN, PARADA_ESQUERDA_MAX = 440, 480   # vindo da direita 
-
+PARADA_EMBAIXO_MIN, PARADA_EMBAIXO_MAX = 340, 340   # vindo de cima 
+PARADA_CIMA_MIN, PARADA_CIMA_MAX = 440, 440   # vindo de baixo 
+PARADA_DIREITA_MIN, PARADA_DIREITA_MAX = 340, 340   # vindo da esquerda 
+PARADA_ESQUERDA_MIN, PARADA_ESQUERDA_MAX = 440, 440   # vindo da direita 4
 # extensão da área considerada "fila" atrás da linha de parada (em pixels)
 COMPRIMENTO_FILA = 160
 
@@ -416,7 +415,7 @@ class Semaforo:
         for i, st in enumerate(estados_semaforo):
             center = centers[i]
             on = (self.estado == st)
-            base_color = col_on[st] if on else COR_CINZA_ESCURO
+            base_cor = col_on[st] if on else COR_CINZA_ESCURO
 
             # halo (apenas quando ligada)
             if on:
@@ -427,7 +426,7 @@ class Semaforo:
 
             # lente com leve gradiente (simulado por dois círculos)
             pygame.draw.circle(tela, (10,10,10), center, self.radius+2)  # borda escura
-            pygame.draw.circle(tela, base_color, center, self.radius)
+            pygame.draw.circle(tela, base_cor, center, self.radius)
             # highlight frontal pequeno
             highlight = pygame.Surface((self.radius*2, self.radius*2), pygame.SRCALPHA)
             pygame.draw.circle(highlight, (255,255,255,60), (int(self.radius*0.6), int(self.radius*0.6)), int(self.radius*0.6))
@@ -481,7 +480,8 @@ class Carro(pygame.sprite.Sprite):
         # --- Evitar parada SOBRE as faixas: calcula posições seguras de parada usando constantes de faixa ---
         # faixa norte (quem vem de cima - 'pra_baixo')
         topo_norte_cruzado = PARADA_EMBAIXO_MIN - CW_GAP - CW_THICKNESS
-        parada_segura_embaixo = topo_norte_cruzado - 4  # margem para não invadir a faixa
+        # aproxima ponto de parada para ficar mais perto da faixa (reduz folga)
+        parada_segura_embaixo = topo_norte_cruzado + 2  # antes: -4, agora mais próximo
 
         # faixa sul (quem vem de baixo - 'pra_cima')
         topo_cruzado_sul = PARADA_CIMA_MIN + CW_GAP
@@ -490,7 +490,8 @@ class Carro(pygame.sprite.Sprite):
 
         # faixa oeste (quem vem da esquerda - 'direita')
         cruz_oeste_esquerda = PARADA_DIREITA_MIN - CW_GAP - CW_THICKNESS
-        parada_segura_direita = cruz_oeste_esquerda - 4
+        # aproxima ponto de parada vindo da esquerda para alinhar com faixas da direita/baixo
+        parada_segura_direita = cruz_oeste_esquerda + 2  # antes: -4, agora mais próximo
 
         # faixa leste (quem vem da direita - 'esquerda')
         cruz_leste_esquerda = PARADA_ESQUERDA_MIN + CW_GAP
@@ -550,12 +551,11 @@ class Carro(pygame.sprite.Sprite):
 
 class Pedestre(pygame.sprite.Sprite):
     """
-    Pedestre atravessa exatamente na localização das faixas.
-    orientacao:
-       'h_n' = faixa superior vertical (U)  -> atravessa horizontalmente (esquerda -> direita)
-       'h_s' = faixa inferior vertical (I)  -> atravessa horizontalmente (esquerda -> direita)
-       'v_r' = faixa direita horizontal (O)  -> atravessa verticalmente (em cima -> embaixo)
-       'v_l' = faixa esquerda horizontal (P)-> atravessa verticalmente (em cima -> embaixo)
+    Pedestre atravessa sobre as faixas; orientações:
+     - 'h_n' = faixa superior vertical (vem de cima)
+     - 'h_s' = faixa inferior vertical (vem de baixo)
+     - 'v_r' = faixa direita horizontal (vem da direita)
+     - 'v_l' = faixa esquerda horizontal (vem da esquerda)
     """
     def __init__(self, orientacao):
         super().__init__()
@@ -565,29 +565,38 @@ class Pedestre(pygame.sprite.Sprite):
         self.atravessando = False
 
         # limites das vias (para garantir faixas só sobre as vias)
-        ESTRADA_X0, ESTRADA_X1 = 340, 460   # vertical: x-range da via
-        ESTRADA_Y0, ESTRADA_Y1 = 340, 460   # horizontal: y-range da via
+        estrada_x0, estrada_x1 = 340, 460
+        estrada_y0, estrada_y1 = 340, 460
 
-        # spawn e alvo calculados com base nas constantes das faixas
+        # calcula posições de faixa consistentes com desenho_ambiente
+        # norte: alinhar com PARADA_EMBAIXO_MAX
+        norte_y = PARADA_EMBAIXO_MAX - CW_GAP - CW_THICKNESS + CW_THICKNESS // 2
+        # sul: alinhar com PARADA_CIMA_MIN + CW_GAP
+        sul_y = PARADA_CIMA_MIN + CW_GAP + CW_THICKNESS // 2
+        # oeste: alinhar com PARADA_DIREITA_MAX
+        oeste_x = PARADA_DIREITA_MAX - CW_GAP - CW_THICKNESS + CW_THICKNESS // 2
+        # leste: alinhar com PARADA_ESQUERDA_MIN + CW_GAP
+        leste_x = PARADA_ESQUERDA_MIN + CW_GAP + CW_THICKNESS // 2
+
         if orientacao == 'h_n':
-            y = (PARADA_EMBAIXO_MIN - CW_GAP - CW_THICKNESS) + CW_THICKNESS//2
-            self.pos = pygame.Vector2(ESTRADA_X0 - 30, y)
-            self.alvo = pygame.Vector2(ESTRADA_X1 + 30, y)
+            y = norte_y
+            self.pos = pygame.Vector2(estrada_x0 - 30, y)
+            self.alvo = pygame.Vector2(estrada_x1 + 30, y)
             tamanho = (10, 16)
         elif orientacao == 'h_s':
-            y = (PARADA_CIMA_MIN + CW_GAP) + CW_THICKNESS//2
-            self.pos = pygame.Vector2(ESTRADA_X0 - 30, y)
-            self.alvo = pygame.Vector2(ESTRADA_X1 + 30, y)
+            y = sul_y
+            self.pos = pygame.Vector2(estrada_x0 - 30, y)
+            self.alvo = pygame.Vector2(estrada_x1 + 30, y)
             tamanho = (10, 16)
         elif orientacao == 'v_r':
-            x = (PARADA_ESQUERDA_MIN + CW_GAP) + CW_THICKNESS//2
-            self.pos = pygame.Vector2(x, ESTRADA_Y0 - 30)
-            self.alvo = pygame.Vector2(x, ESTRADA_Y1 + 30)
+            x = leste_x
+            self.pos = pygame.Vector2(x, estrada_y0 - 30)
+            self.alvo = pygame.Vector2(x, estrada_y1 + 30)
             tamanho = (16, 10)
         else:  # v_l
-            x = (PARADA_DIREITA_MIN - CW_GAP - CW_THICKNESS) + CW_THICKNESS//2
-            self.pos = pygame.Vector2(x, ESTRADA_Y0 - 30)
-            self.alvo = pygame.Vector2(x, ESTRADA_Y1 + 30)
+            x = oeste_x
+            self.pos = pygame.Vector2(x, estrada_y0 - 30)
+            self.alvo = pygame.Vector2(x, estrada_y1 + 30)
             tamanho = (16, 10)
 
         surf = pygame.Surface(tamanho, pygame.SRCALPHA)
@@ -597,15 +606,15 @@ class Pedestre(pygame.sprite.Sprite):
         self.rect = self.image.get_rect(center=(int(self.pos.x), int(self.pos.y)))
 
     def update(self, luz_vertical, luz_horizontal):
-        # decide se pode iniciar travessia: somente quando o tráfego perpendicular estiver parado (vermelho)
+        # decide se pode iniciar travessia: somente quando o tráfego PERPENDICULAR estiver RED
         if self.esperando:
             if self.orientacao in ('h_n', 'h_s'):
-                # precisam que a via vertical esteja RED para poderem atravessar (pois atravessam a via vertical)
+                # esses atravessam a via vertical -> precisam que luz_vertical seja RED
                 if luz_vertical.estado == 'vermelho':
                     self.esperando = False
                     self.atravessando = True
             else:
-                # v_* atravessam a via horizontal, precisam que luz_horizontal seja vermelho
+                # atravessam a via horizontal -> precisam que luz_horizontal seja RED
                 if luz_horizontal.estado == 'vermelho':
                     self.esperando = False
                     self.atravessando = True
@@ -615,14 +624,13 @@ class Pedestre(pygame.sprite.Sprite):
             dir_vec = (self.alvo - self.pos)
             if dir_vec.length() != 0:
                 move = dir_vec.normalize() * self.velocidade
-                # evita overshoot
                 if move.length() > dir_vec.length():
                     self.pos = self.alvo
                 else:
                     self.pos += move
                 self.rect.center = (int(self.pos.x), int(self.pos.y))
 
-            # fim da travessia -> remove
+            # remove ao terminar travessia
             if (self.pos - self.alvo).length() < 2:
                 self.kill()
 
@@ -635,7 +643,7 @@ class ControladorSemaforo:
         self.luz_vertical.estado = 'vermelho'
         self.luz_horizontal.estado = 'verde'
         self.timer = 0
-        self.change_sequence = None
+        self.mudar_sequencia = None
         self.last_priority_score = 0
         self.YELLOW_TIME = 2 * FPS
 
@@ -655,16 +663,16 @@ class ControladorSemaforo:
         if axis == 'v':
             # pedestres atravessando horizontalmente (impactam tráfego vertical) =>
             # precisamos que luz_vertical fique vermelho (ou seja, tornar vertical RED / horizontal GREEN).
-            if self.luz_horizontal.estado == 'verde' and not self.change_sequence:
+            if self.luz_horizontal.estado == 'verde' and not self.mudar_sequencia:
                 self.luz_horizontal.estado = 'amarelo'
-                self.change_sequence = 'to_v'
+                self.mudar_sequencia = 'to_v'
                 self.timer = 0
         elif axis == 'h':
             # pedestres atravessando verticalmente (impactam tráfego horizontal) =>
             # precisamos que luz_horizontal fique vermelho (tornar horizontal RED / vertical GREEN)
-            if self.luz_vertical.estado == 'verde' and not self.change_sequence:
+            if self.luz_vertical.estado == 'verde' and not self.mudar_sequencia:
                 self.luz_vertical.estado = 'amarelo'
-                self.change_sequence = 'to_h'
+                self.mudar_sequencia = 'to_h'
                 self.timer = 0
 
     def update(self, cars_v, cars_h, ambiente=None, pedestres_esperando_total=0):
@@ -676,16 +684,16 @@ class ControladorSemaforo:
         # incrementa timer (frames desde início do verde)
         self.timer += 1
 
-        # comportamento anterior mantido: tratamento de change_sequence/amarelo
-        if self.change_sequence:
+        # comportamento anterior mantido: tratamento de mudar_sequencia/amarelo
+        if self.mudar_sequencia:
             if self.timer > self.YELLOW_TIME:
-                if self.change_sequence == 'to_v':
+                if self.mudar_sequencia == 'to_v':
                     self.luz_horizontal.estado = 'vermelho'
                     self.luz_vertical.estado = 'verde'
-                elif self.change_sequence == 'to_h':
+                elif self.mudar_sequencia == 'to_h':
                     self.luz_vertical.estado = 'vermelho'
                     self.luz_horizontal.estado = 'verde'
-                self.change_sequence = None
+                self.mudar_sequencia = None
                 self.timer = 0
             return
 
@@ -736,10 +744,10 @@ class ControladorSemaforo:
         if prioridade >= 5.0:
             if self.luz_horizontal.estado == 'verde':
                 self.luz_horizontal.estado = 'amarelo'
-                self.change_sequence = 'to_v'
+                self.mudar_sequencia = 'to_v'
             else:
                 self.luz_vertical.estado = 'amarelo'
-                self.change_sequence = 'to_h'
+                self.mudar_sequencia = 'to_h'
             self.timer = 0
             return
 
@@ -748,10 +756,10 @@ class ControladorSemaforo:
             if tempo_verde_segundos >= tempo_recomendado:
                 if self.luz_horizontal.estado == 'verde':
                     self.luz_horizontal.estado = 'amarelo'
-                    self.change_sequence = 'to_v'
+                    self.mudar_sequencia = 'to_v'
                 else:
                     self.luz_vertical.estado = 'amarelo'
-                    self.change_sequence = 'to_h'
+                    self.mudar_sequencia = 'to_h'
                 self.timer = 0
 
 # --- AMBIENTE ---
@@ -768,45 +776,36 @@ def desenho_ambiente():
         if not 350 < x < 450:
             pygame.draw.rect(tela, COR_BRANCA, (x, 395, 20, 10))
 
-    # --- Faixas de pedestre restritas às vias, um pouco antes do cruzamento ---
-    # usa a constante global CW_THICKNESS para espessura (agora maior)
-    cw_thickness = CW_THICKNESS    # espessura da faixa (altura das listras horizontais)
-    stripe_w = 12        # largura de cada listra (aumentei para combinar com a espessura)
-    stripe_gap = 7     # espaço entre listras (ajustado)
-    stripe_margin = 8    # margem interna dentro da via (para não pintar rente às bordas)
-    cw_gap = CW_GAP      # distância da linha de parada/área de stop
+    # --- Faixas de pedestre restritas às vias, posicionadas na SAÍDA da via ---
+    cw_thickness = CW_THICKNESS
+    faixa_w = 12
+    faixa_brecha = 7
+    faixa_margem = 8
+    cw_gap = CW_GAP
 
-    # limites das vias (para garantir faixas só sobre as vias)
-    estrada_x0, estrada_x1 = 350, 450   # vertical: x-range da via
-    estrada_y0, estrada_y1 = 350, 450   # horizontal: y-range da via
+    estrada_x0, estrada_x1 = ESTRADA_X0, ESTRADA_X1
+    estrada_y0, estrada_y1 = ESTRADA_Y0, ESTRADA_Y1
 
-    # -- Faixas para a via vertical (listras HORIZONTAIS atravessando a via vertical) --
-    x_start = estrada_x0 + stripe_margin
-    x_end = estrada_x1 - stripe_margin
+    # Usar as coordenadas de "parada" (PARADA_*_MAX/MIN) de forma consistente:
+    # - faixa norte (quem vem de cima -> 'pra_baixo'): alinhar com PARADA_EMBAIXO_MAX
+    norte_y = PARADA_EMBAIXO_MAX - cw_gap - cw_thickness
+    for x in range(estrada_x0 + faixa_margem, estrada_x1 - faixa_margem, faixa_w + faixa_brecha):
+        pygame.draw.rect(tela, COR_BRANCA, (x, norte_y, faixa_w, cw_thickness))
 
-    # norte: antes do cruzamento (para quem vem de cima -> 'pra_baixo')
-    north_y = PARADA_EMBAIXO_MIN - cw_gap - cw_thickness
-    for x in range(x_start, x_end, stripe_w + stripe_gap):
-        pygame.draw.rect(tela, COR_BRANCA, (x, north_y, stripe_w, cw_thickness))
+    # - faixa sul (quem vem de baixo -> 'pra_cima'): continua alinhada com PARADA_CIMA_MIN + gap
+    sul_y = PARADA_CIMA_MIN + cw_gap
+    for x in range(estrada_x0 + faixa_margem, estrada_x1 - faixa_margem, faixa_w + faixa_brecha):
+        pygame.draw.rect(tela, COR_BRANCA, (x, sul_y, faixa_w, cw_thickness))
 
-    # sul: antes do cruzamento (para quem vem de baixo -> 'pra_cima')
-    south_y = PARADA_CIMA_MIN + cw_gap
-    for x in range(x_start, x_end, stripe_w + stripe_gap):
-        pygame.draw.rect(tela, COR_BRANCA, (x, south_y, stripe_w, cw_thickness))
+    # - faixa oeste (quem vem da esquerda -> 'direita'): alinhar com PARADA_DIREITA_MAX
+    esquerda_x = PARADA_DIREITA_MAX - cw_gap - cw_thickness
+    for y in range(estrada_y0 + faixa_margem, estrada_y1 - faixa_margem, faixa_w + faixa_brecha):
+        pygame.draw.rect(tela, COR_BRANCA, (esquerda_x, y, cw_thickness, faixa_w))
 
-    # -- Faixas para a via horizontal (listras VERTICAIS atravessando a via horizontal) --
-    y_start = estrada_y0 + stripe_margin
-    y_end = estrada_y1 - stripe_margin
-
-    # oeste: antes do cruzamento (para quem vem da esquerda -> 'direita')
-    left_x = PARADA_DIREITA_MIN - cw_gap - cw_thickness
-    for y in range(y_start, y_end, stripe_w + stripe_gap):
-        pygame.draw.rect(tela, COR_BRANCA, (left_x, y, cw_thickness, stripe_w))
-
-    # leste: antes do cruzamento (para quem vem da direita -> 'esquerda')
-    right_x = PARADA_ESQUERDA_MIN + cw_gap
-    for y in range(y_start, y_end, stripe_w + stripe_gap):
-        pygame.draw.rect(tela, COR_BRANCA, (right_x, y, cw_thickness, stripe_w))
+    # - faixa leste (quem vem da direita -> 'esquerda'): continua alinhada com PARADA_ESQUERDA_MIN + gap
+    direita_x = PARADA_ESQUERDA_MIN + cw_gap
+    for y in range(estrada_y0 + faixa_margem, estrada_y1 - faixa_margem, faixa_w + faixa_brecha):
+        pygame.draw.rect(tela, COR_BRANCA, (direita_x, y, cw_thickness, faixa_w))
 
 # Função auxiliar para detectar se um carro está "esperando"
 def carros_esperando(car, todos_carros, controlador):
@@ -861,35 +860,53 @@ def main():
         metricas_escrever.writerow(["timestamp", "sim_time_s", "carros_via", "total_gerado", "carros_saíram", "esperando_vertical", "esperando_horizontal", "pedestres_esperando", "prioridade"])
         metricas_f.flush()
 
-    sim_time = 0.0
-    LOG_INTERVAL = 1.0
+    tempo_sim = 0.0
+    INTERVALO_REGISTROS = 1.0
     ultimo_registro = 0.0
 
     # ambiente inicial e controle de refresh
     ambiente = gerar_ambiente_aleatorio()
-    INTERVALO_ATUALIZACAO_AMBIENTE = 30.0 # Teste com 30 segundos  # segundos (1 minuto) para regenerar variáveis ambientais aleatórias
-    ultima_atualizacao_ambiente = 0.0
+    # NÃO usar auto-refresh: mudança será por botão/tecla
+    INTERVALO_ATUALIZACAO_AMBIENTE = None
+    ultima_atualizacao_ambiente = None
+
+    # botão para alterar ambiente (canto superior direito)
+    botao_ambiente_rect = pygame.Rect(LARGURA_TELA - 180, 50, 170, 34)
+    botao_ambiente_cor = (50, 50, 60)
+    botao_ambiente_texto = fonte.render("Alterar Ambiente (E)", True, COR_BRANCA)
 
     # alerta visual quando o ambiente muda
     alerta_comeco_ambiente = None
     ALERTA_ALTERACAO_AMBIENTE = 3.0  # segundos que o alerta permanece visível
-    env_alert_text = ""
+    alerta_texto_ambiente = ""
 
     try:
         while True:
             # controla dt e tempo simulado (usado para logging)
             dt_ms = tempo.tick(FPS)
             dt = dt_ms / 1000.0
-            sim_time += dt
+            tempo_sim += dt
 
-            # atualiza ambiente aleatório periodicamente
-            if sim_time - ultima_atualizacao_ambiente >= INTERVALO_ATUALIZACAO_AMBIENTE:
-                new_env = gerar_ambiente_aleatorio()
-                ambiente = new_env
-                ultima_atualizacao_ambiente = sim_time
-                # registra alerta para exibição na tela
-                env_alert_text = f"Ambiente alterado: {ambiente['clima']} | Carros: {ambiente['fluxo_de_carros']} | Pedestres: {ambiente['fluxo_de_pedestres']} | Hora: {ambiente['hora']}"
-                alerta_comeco_ambiente = sim_time
+            # atualiza ambiente aleatório periodicamente (apenas se INTERVALO_ATUALIZACAO_AMBIENTE for numérico)
+            if INTERVALO_ATUALIZACAO_AMBIENTE is not None:
+                # inicializa timestamp de referência na primeira passada
+                if ultima_atualizacao_ambiente is None:
+                    ultima_atualizacao_ambiente = tempo_sim
+                if tempo_sim - ultima_atualizacao_ambiente >= INTERVALO_ATUALIZACAO_AMBIENTE:
+                    novo_ambiente = gerar_ambiente_aleatorio()
+                    ambiente = novo_ambiente
+                    ultima_atualizacao_ambiente = tempo_sim
+
+                    # --- RESET ao mudar ambiente: remove todos os carros e pedestres ---
+                    todos_carros.empty()
+                    todos_pedestres.empty()
+                    # zera flags de bloqueio de pedestres (caso algum estivesse atravessando)
+                    BLOQUEIO_PEDESTRES_VERT = 0
+                    BLOQUEIO_PEDESTRES_HORI = 0
+
+                    # registra alerta para exibição na tela
+                    alerta_texto_ambiente = f"Ambiente alterado: {ambiente['clima']} | Carros: {ambiente['fluxo_de_carros']} | Pedestres: {ambiente['fluxo_de_pedestres']} | Hora: {ambiente['hora']}"
+                    alerta_comeco_ambiente = tempo_sim
 
             # Loop de eventos (apenas QUIT / ESC)
             for event in pygame.event.get():
@@ -897,6 +914,26 @@ def main():
                     raise KeyboardInterrupt
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                     raise KeyboardInterrupt
+                # tecla rápida para alterar ambiente
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_e:
+                    # gerar novo ambiente e resetar sprites
+                    ambiente = gerar_ambiente_aleatorio()
+                    todos_carros.empty()
+                    todos_pedestres.empty()
+                    BLOQUEIO_PEDESTRES_VERT = 0
+                    BLOQUEIO_PEDESTRES_HORI = 0
+                    alerta_texto_ambiente = f"Ambiente alterado: {ambiente['clima']} | Carros: {ambiente['fluxo_de_carros']} | Pedestres: {ambiente['fluxo_de_pedestres']} | Hora: {ambiente['hora']}"
+                    alerta_comeco_ambiente = tempo_sim
+                # clique no botão do mouse para alterar ambiente
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    if botao_ambiente_rect.collidepoint(event.pos):
+                        ambiente = gerar_ambiente_aleatorio()
+                        todos_carros.empty()
+                        todos_pedestres.empty()
+                        BLOQUEIO_PEDESTRES_VERT = 0
+                        BLOQUEIO_PEDESTRES_HORI = 0
+                        alerta_texto_ambiente = f"Ambiente alterado: {ambiente['clima']} | Carros: {ambiente['fluxo_de_carros']} | Pedestres: {ambiente['fluxo_de_pedestres']} | Hora: {ambiente['hora']}"
+                        alerta_comeco_ambiente = tempo_sim
 
             # --- SPAWN AUTOMÁTICO ALEATÓRIO ---
             # taxas base (por segundo)
@@ -1001,6 +1038,19 @@ def main():
             ped_info = fonte.render(f"Pedestres esperando: {pedestres_esperando_total} | atravessando V:{pedestres_atravessando_vertical} H:{pedestres_atravessando_horizontal}", True, COR_PRETA)
             priority_text = fonte.render(f"Prioridade (Fuzzy): {controlador.last_priority_score:.2f}", True, COR_PRETA)
 
+            # mostra tempo recomendado (se disponível no controlador) logo abaixo de pedestres esperando
+            if hasattr(controlador, 'last_tempo_recomendado'):
+                tempo_recomendado_text = fonte.render(f"Tempo recomendado: {controlador.last_tempo_recomendado:.2f}s", True, COR_PRETA)
+            else:
+                tempo_recomendado_text = fonte.render("Tempo recomendado: -", True, COR_PRETA)
+
+            # posições de desenho dos textos (mantém espaçamento)
+            tela.blit(info_v, (10, 10))
+            tela.blit(info_h, (10, 35))
+            tela.blit(ped_info, (10, 60))
+            tela.blit(tempo_recomendado_text, (10, 60 + ped_info.get_height() + 6))  # abaixo de ped_info
+            tela.blit(priority_text, (LARGURA_TELA // 2 - priority_text.get_width() // 2, 10))
+
             # exibe variáveis aleatórias do ambiente
             ambiente_clima = fonte.render(f"Clima: {ambiente['clima']}", True, COR_PRETA)
             ambiente_fluxo_carros = fonte.render(f"Fluxo Carros: {ambiente['fluxo_de_carros']}", True, COR_PRETA)
@@ -1010,24 +1060,43 @@ def main():
             tela.blit(info_v, (10, 10))
             tela.blit(info_h, (10, 35))
             tela.blit(ped_info, (10, 60))
+            tela.blit(tempo_recomendado_text, (10, 60 + ped_info.get_height() + 6))  # abaixo de ped_info
             tela.blit(priority_text, (LARGURA_TELA // 2 - priority_text.get_width() // 2, 10))
 
-            # posição de exibição das variáveis ambientais (canto superior direito)
+            # posição de exibição das variáveis ambientais (canto superior direito),
+            # e posiciona o botão logo abaixo do "Horário"
             x_off = LARGURA_TELA - 10
-            tela.blit(ambiente_clima, (x_off - ambiente_clima.get_width(), 10))
-            tela.blit(ambiente_fluxo_carros, (x_off - ambiente_fluxo_carros.get_width(), 10 + ambiente_clima.get_height() + 4))
-            tela.blit(ambiente_fluxo_pedestres, (x_off - ambiente_fluxo_pedestres.get_width(), 10 + ambiente_clima.get_height() + ambiente_fluxo_carros.get_height() + 8))
-            tela.blit(ambiente_hora, (x_off - ambiente_hora.get_width(), 10 + ambiente_clima.get_height() + ambiente_fluxo_carros.get_height() + ambiente_fluxo_pedestres.get_height() + 12))
+            y0 = 10
+            y_clima = y0
+            y_fluxo_carros = y_clima + ambiente_clima.get_height() + 4
+            y_fluxo_pedestres = y_fluxo_carros + ambiente_fluxo_carros.get_height() + 4
+            y_hora = y_fluxo_pedestres + ambiente_fluxo_pedestres.get_height() + 4
+
+            tela.blit(ambiente_clima, (x_off - ambiente_clima.get_width(), y_clima))
+            tela.blit(ambiente_fluxo_carros, (x_off - ambiente_fluxo_carros.get_width(), y_fluxo_carros))
+            tela.blit(ambiente_fluxo_pedestres, (x_off - ambiente_fluxo_pedestres.get_width(), y_fluxo_pedestres))
+            tela.blit(ambiente_hora, (x_off - ambiente_hora.get_width(), y_hora))
+
+            # posiciona o botão imediatamente abaixo do "Horário"
+            padding_botao = 6
+            botao_x = x_off - botao_ambiente_rect.width
+            botao_y = y_hora + ambiente_hora.get_height() + padding_botao
+            botao_ambiente_rect.topleft = (botao_x, botao_y)
+
+            # desenha botão de alterar ambiente (agora posicionado dinamicamente)
+            pygame.draw.rect(tela, botao_ambiente_cor, botao_ambiente_rect, border_radius=6)
+            pygame.draw.rect(tela, (90,90,100), botao_ambiente_rect, 2, border_radius=6)
+            tela.blit(botao_ambiente_texto, (botao_ambiente_rect.x + 10, botao_ambiente_rect.y + (botao_ambiente_rect.height - botao_ambiente_texto.get_height())//2))
 
             # --- Desenha alerta de alteração de ambiente (se ativo) ---
             if alerta_comeco_ambiente is not None:
-                decorrido = sim_time - alerta_comeco_ambiente
+                decorrido = tempo_sim - alerta_comeco_ambiente
                 if decorrido <= ALERTA_ALTERACAO_AMBIENTE:
                     # quebra o texto em linhas para evitar overflow
                     wrap_width = 56
-                    lines = textwrap.wrap(env_alert_text, wrap_width)
+                    lines = textwrap.wrap(alerta_texto_ambiente, wrap_width)
                     # calcula dimensões do overlay conforme o maior texto
-                    overlay_w = max((fonte.tamanho(line)[0] for line in lines), default=200) + 40
+                    overlay_w = max((fonte.size(line)[0] for line in lines), default=200) + 40
                     overlay_h = len(lines) * fonte.get_linesize() + 24
                     overlay_s = pygame.Surface((overlay_w, overlay_h), pygame.SRCALPHA)
                     overlay_s.fill((20, 20, 20, 220))  # fundo escuro translúcido
@@ -1041,15 +1110,21 @@ def main():
                 else:
                     alerta_comeco_ambiente = None
 
+            # --- Botão para alterar ambiente (não usa refresh automático) ---
+            pygame.draw.rect(tela, botao_ambiente_cor, botao_ambiente_rect, border_radius=6)
+            # borda ligeiramente mais clara
+            pygame.draw.rect(tela, (90,90,100), botao_ambiente_rect, 2, border_radius=6)
+            tela.blit(botao_ambiente_texto, (botao_ambiente_rect.x + 10, botao_ambiente_rect.y + (botao_ambiente_rect.height - botao_ambiente_texto.get_height())//2))
+
             pygame.display.flip()
 
-            # grava métricas a cada LOG_INTERVAL segundos
-            if sim_time - ultimo_registro >= LOG_INTERVAL:
+            # grava métricas a cada INTERVALO_REGISTROS segundos
+            if tempo_sim - ultimo_registro >= INTERVALO_REGISTROS:
                 timestamp = time.time()
                 carros_via = len(todos_carros)
-                metricas_escrever.writerow([timestamp, f"{sim_time:.2f}", carros_via, total_gerado, carros_saíram, carros_esperando_vertical, carros_esperando_horizontal, pedestres_esperando_total, f"{controlador.last_priority_score:.2f}"])
+                metricas_escrever.writerow([timestamp, f"{tempo_sim:.2f}", carros_via, total_gerado, carros_saíram, carros_esperando_vertical, carros_esperando_horizontal, pedestres_esperando_total, f"{controlador.last_priority_score:.2f}"])
                 metricas_f.flush()
-                ultimo_registro = sim_time
+                ultimo_registro = tempo_sim
 
     except KeyboardInterrupt:
         # encerra limpo
@@ -1063,11 +1138,11 @@ if __name__ == '__main__':
 # --- PEDRESTES ---
 class Pedestre(pygame.sprite.Sprite):
     """
-    Pedestre atravessa sobre as faixas; orientations:
-     - 'h_n' = faixa superior vertical (U)  -> atravessa horizontalmente (left -> right)
-     - 'h_s' = faixa inferior vertical (I)  -> atravessa horizontalmente (left -> right)
-     - 'v_r' = faixa direita horizontal (O) -> atravessa verticalmente (top -> bottom)
-     - 'v_l' = faixa esquerda horizontal (P)-> atravessa verticalmente (top -> bottom)
+    Pedestre atravessa sobre as faixas; orientações:
+     - 'h_n' = faixa superior vertical (vem de cima)
+     - 'h_s' = faixa inferior vertical (vem de baixo)
+     - 'v_r' = faixa direita horizontal (vem da direita)
+     - 'v_l' = faixa esquerda horizontal (vem da esquerda)
     """
     def __init__(self, orientacao):
         super().__init__()
@@ -1077,34 +1152,45 @@ class Pedestre(pygame.sprite.Sprite):
         self.atravessando = False
 
         # limites das vias (para garantir faixas só sobre as vias)
-        estrada_x0, estrada_x1 = 340, 460   # vertical: x-range da via
-        estrada_y0, estrada_y1 = 340, 460   # horizontal: y-range da via
+        estrada_x0, estrada_x1 = 340, 460
+        estrada_y0, estrada_y1 = 340, 460
 
-        # spawn/alvo com base nos STOP_* e constantes de faixa
+        # calcula posições de faixa consistentes com desenho_ambiente
+        # norte: alinhar com PARADA_EMBAIXO_MAX
+        norte_y = PARADA_EMBAIXO_MAX - CW_GAP - CW_THICKNESS + CW_THICKNESS // 2
+        # sul: alinhar com PARADA_CIMA_MIN + CW_GAP
+        sul_y = PARADA_CIMA_MIN + CW_GAP + CW_THICKNESS // 2
+        # oeste: alinhar com PARADA_DIREITA_MAX
+        oeste_x = PARADA_DIREITA_MAX - CW_GAP - CW_THICKNESS + CW_THICKNESS // 2
+        # leste: alinhar com PARADA_ESQUERDA_MIN + CW_GAP
+        leste_x = PARADA_ESQUERDA_MIN + CW_GAP + CW_THICKNESS // 2
+
         if orientacao == 'h_n':
-            y = PARADA_EMBAIXO_MIN - CW_GAP - CW_THICKNESS + CW_THICKNESS // 2
+            y = norte_y
             self.pos = pygame.Vector2(estrada_x0 - 30, y)
             self.alvo = pygame.Vector2(estrada_x1 + 30, y)
             tamanho = (10, 16)
         elif orientacao == 'h_s':
-            y = PARADA_CIMA_MIN + CW_GAP + CW_THICKNESS // 2
+            y = sul_y
             self.pos = pygame.Vector2(estrada_x0 - 30, y)
             self.alvo = pygame.Vector2(estrada_x1 + 30, y)
             tamanho = (10, 16)
         elif orientacao == 'v_r':
-            x = PARADA_ESQUERDA_MIN + CW_GAP + CW_THICKNESS // 2
+            x = leste_x
             self.pos = pygame.Vector2(x, estrada_y0 - 30)
             self.alvo = pygame.Vector2(x, estrada_y1 + 30)
             tamanho = (16, 10)
         else:  # v_l
-            x = PARADA_DIREITA_MIN - CW_GAP - CW_THICKNESS + CW_THICKNESS // 2
+            x = oeste_x
             self.pos = pygame.Vector2(x, estrada_y0 - 30)
             self.alvo = pygame.Vector2(x, estrada_y1 + 30)
             tamanho = (16, 10)
 
         surf = pygame.Surface(tamanho, pygame.SRCALPHA)
-        pygame.draw.ellipse(surf, (240,128,128), surf.get_rect())
+        COLOR_PEDESTRIAN = (240, 128, 128)
+        pygame.draw.ellipse(surf, COLOR_PEDESTRIAN, surf.get_rect())
         self.image = surf
+       
         self.rect = self.image.get_rect(center=(int(self.pos.x), int(self.pos.y)))
 
     def update(self, luz_vertical, luz_horizontal):
