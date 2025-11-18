@@ -705,7 +705,7 @@ class ControladorSemaforo:
         now = time.time()
         should_print = (now - self._last_fuzzy_print_time >= self._fuzzy_print_interval) or (prioridade >= 5.0)
         if should_print:
-            print(f"[FUZZY-PRIORIDADE] prioridade(defuzz)={prioridade:.2f} | entradas: carros_vermelha={carros_na_vermelha}, tempo_verde={tempo_verde_segundos:.2f}s, ped_esperando={pedestres_esperando_total}")
+            print(f"[FUZZY-PRIORIDADE] prioridade(defuzz)={prioridade:.2f} | entradas: carros_vermelho={carros_na_vermelha}, tempo_verde={tempo_verde_segundos:.2f}s, ped_esperando={pedestres_esperando_total}")
             for desc, grau in ativacoes:
                 if grau > 0.01:
                     print(f"  - {desc} -> grau={grau:.3f}")
