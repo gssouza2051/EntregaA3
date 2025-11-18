@@ -234,19 +234,17 @@ class FuzzyControlador:
             h = int(hora_str.split(":")[0])
         except Exception:
             return 1.0
-        # pico: 07-09 e 17-19
-        if 7 <= h <= 9 or 17 <= h <= 19:
+        # pico: 07-09 e 18-19
+        if 7 <= h <= 9 or 18 <= h <= 19:
             return 2.0  # Pico
-        # normal: 10-16
-        if 10 <= h <= 16:
+        # normal: 10-17
+        if 10 <= h <= 17:
             return 1.0  # Normal
         return 0.0      # Outro
 
     def calcular_tempo_a_partir_do_ambiente(self, rotulo_fluxo_carros, rotulo_fluxo_pedestres, hora_str, rotulo_clima):
         """
         Recebe labels do ambiente (strings) e retorna tempo_recomendado (float segundos).
-        Implementação mais resiliente: usa uma simulação local e tenta recuperar a saída
-        mesmo que a chave não exista exatamente como 'tempo_semaforo'.
         """
         cf = self.mapear_rotulo_de_fluxo_para_valor(rotulo_fluxo_carros)
         pf = self.mapear_rotulo_de_fluxo_para_valor(rotulo_fluxo_pedestres)
@@ -707,7 +705,7 @@ class ControladorSemaforo:
         now = time.time()
         should_print = (now - self._last_fuzzy_print_time >= self._fuzzy_print_interval) or (prioridade >= 5.0)
         if should_print:
-            print(f"[FUZZY-PRIOR] prioridade(defuzz)={prioridade:.2f} | entradas: carros_vermelha={carros_na_vermelha}, tempo_verde={tempo_verde_segundos:.2f}s, ped_esperando={pedestres_esperando_total}")
+            print(f"[FUZZY-PRIORIDADE] prioridade(defuzz)={prioridade:.2f} | entradas: carros_vermelha={carros_na_vermelha}, tempo_verde={tempo_verde_segundos:.2f}s, ped_esperando={pedestres_esperando_total}")
             for desc, grau in ativacoes:
                 if grau > 0.01:
                     print(f"  - {desc} -> grau={grau:.3f}")
