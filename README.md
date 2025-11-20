@@ -1,92 +1,82 @@
-# Simulador de Semáforo com Lógica Fuzzy — README (atualizado)
+# Simulador / Notebook — Controle de Semáforo com Lógica Fuzzy
 
 Resumo
 ------
-Simulador 2D (pygame) de um cruzamento controlado por um controlador Fuzzy. Além do controle original por "prioridade de troca", o sistema possui uma base fuzzy que recomenda o `tempo_semaforo` (segundos) a partir de variáveis ambientais (`clima`, `fluxo_de_carros`, `fluxo_de_pedestres`, `hora`). As variáveis ambientais podem ser mudadas manualmente (botão/tecla) e são exibidas na HUD.
+Notebook (main.ipynb) que implementa um sistema fuzzy para recomendar o tempo do semáforo (`tempo_semaforo`) a partir de variáveis: `fluxo_de_carros`, `fluxo_de_pedestres`, `horario` e `clima`. Usa scikit-fuzzy (skfuzzy) para definir MFs, montar regras e executar a simulação (ControlSystemSimulation).
 
-O que são Variáveis Linguísticas (VLs)
--------------------------------------
-Variáveis linguísticas representam grandezas numéricas por termos qualitativos (ex.: "Baixo", "Médio", "Alto"). Cada termo tem uma Função de Pertinência (membership function) que fornece um grau (0..1). A lógica fuzzy usa esses graus para avaliar regras IF–THEN de forma gradual, não-binária.
+Requisitos
+----------
+- Python 3.8+
+- Dependências (instalar no notebook ou venv):
+  pip install scikit-fuzzy==0.5.0 numpy matplotlib
 
-Entradas e Saídas do Sistema
-----------------------------
-- Entradas legado (para prioridade):
-  - número de carros na via vermelha (`carros_via` / até 10).
-  - tempo que o verde atual já está ativo (`tempo_verde` / segundos).
-  - pedestres esperando (`pedestres_esperando`).
+Como usar o notebook
+--------------------
+1. Abrir `main.ipynb` no Jupyter / VS Code.  
+2. Executar as células na ordem. A primeira célula contém a linha de instalação `pip install scikit-fuzzy==0.5.0`.  
+3. Definir entradas em `execucao_simulador.input[...]`, chamar `execucao_simulador.compute()` e visualizar `tempo_semaforo` com `tempo_semaforo.view(sim=execucao_simulador)` ou imprimir `execucao_simulador.output['tempo_semaforo']`.
 
-- Entradas ambientais (usadas pela base fuzzy de tempo):
-  - `fluxo_de_carros` : "Baixo" / "Médio" / "Alto"
-  - `fluxo_de_pedestres` : "Baixo" / "Médio" / "Alto"
-  - `hora` : string "HH:MM:SS" mapeada para `horario` (Outro/Normal/Pico)
-  - `clima` : "Ensolarado" / "Nublado" / "Chuvoso"
+Variáveis e universos (conforme notebook)
+----------------------------------------
+- fluxo_de_carros, fluxo_de_pedestres: universo np.arange(0,11,1) → valores inteiros 0..10  
+- horario, clima (no notebook definidos também como np.arange(0,11,1)) — neste notebook `horario` e `clima` usam universo 0..10 
+- tempo_semaforo (saída): np.arange(0,31,1) → 0..30 segundos
 
-- Saídas:
-  - `prioridade` (0..10) — score heurístico que pode forçar troca.
-  - `tempo_semaforo` (0..30 s) — tempo recomendado para manter o verde.
-
-Funções de Pertinência (Fuzzificação)
+Funções de Pertinência (fuzzificação)
 ------------------------------------
-Implementadas com `skfuzzy` (trimf):
+Todas as MFs são definidas via fuzz.trimf (triangular):
+- fluxo_de_carros / fluxo_de_pedestres:
+  - Baixo:  [0, 0, 4]
+  - Médio:  [2, 5, 8]
+  - Alto:   [6, 10, 10]
+- horario (no notebook): rotulados como Baixo/Normal/Pico com mesmas trimf acima (universo 0..10)
+- clima (no notebook): Ensolarado/Nublado/Chuvoso com mesmas trimf acima
+- tempo_semaforo (saída):
+  - Baixo:  [0,0,8]
+  - Médio:  [6,15,22]
+  - Alto:   [18,30,30]
 
-1. `fluxo_de_carros`, `fluxo_de_pedestres` (universo 0..10)
-   - Baixo : trimf [0, 0, 4]
-   - Médio : trimf [2, 5, 8]
-   - Alto  : trimf [6, 10, 10]
+Base de Regras (inferência)
+---------------------------
+Regras implementadas no notebook (9 regras principais):
+1. SE fluxo_de_carros É Alto E horario É Pico ENTÃO tempo_semaforo É Alto.  
+2. SE fluxo_de_carros É Médio E fluxo_de_pedestres É Médio E horario É Normal ENTÃO tempo_semaforo É Médio.  
+3. SE fluxo_de_carros É Baixo OU fluxo_de_pedestres É Baixo ENTÃO tempo_semaforo É Baixo.  
+4. SE fluxo_de_carros É Alto E fluxo_de_pedestres É Alto E horario É Normal ENTÃO tempo_semaforo É Médio.  
+5. SE fluxo_de_carros É Alto E fluxo_de_pedestres É Alto E horario É Pico ENTÃO tempo_semaforo É Alto.  
+6. SE fluxo_de_carros É Alto E clima É Chuvoso ENTÃO tempo_semaforo É Alto.  
+7. SE fluxo_de_carros Baixo E fluxo_de_pedestres Baixo E horario Baixo ENTÃO tempo_semaforo Baixo.  
+8. SE fluxo_de_carros Baixo E fluxo_de_pedestres Alto ENTÃO tempo_semaforo Médio.  
+9. SE fluxo_de_carros Médio E horario Baixo ENTÃO tempo_semaforo Médio.
 
-2. `horario` (universo 0..2)
-   - Outro  : trimf [0,0,1]
-   - Normal : trimf [0,1,2]
-   - Pico   : trimf [1,2,2]
-   - (mapeamento feito por `mapear_rotulo_hora_para_valor`)
-
-3. `clima` (universo 0..2)
-   - Ensolarado: trimf [0,0,1]
-   - Nublado   : trimf [0,1,2]
-   - Chuvoso    : trimf [1,2,2]
-
-4. `tempo_semaforo` (universo 0..30)
-   - Baixo  : trimf [0,0,8]
-   - Médio  : trimf [6,15,22]
-   - Alto   : trimf [18,30,30]
-
-Base de Regras Fuzzy (Inferência)
----------------------------------
-Regras implementadas (usadas para `tempo_semaforo`):
-
-1) SE (`fluxo_de_carros` é Alto) E (`horario` é Pico) ENTÃO (`tempo_semaforo` é Alto).  
-2) SE (`fluxo_de_carros` é Médio) E (`fluxo_de_pedestres` é Médio) E (`horario` é Normal) ENTÃO (`tempo_semaforo` é Médio).  
-3) SE (`fluxo_de_carros` é Baixo) OU (`fluxo_de_pedestres` é Baixo) ENTÃO (`tempo_semaforo` é Baixo).  
-4) SE (`fluxo_de_carros` é Alto) E (`fluxo_de_pedestres` é Alto) E (`horario` é Normal) ENTÃO (`tempo_semaforo` é Médio).  
-5) SE (`fluxo_de_carros` é Alto) E (`fluxo_de_pedestres` é Alto) E (`horario` é Pico) ENTÃO (`tempo_semaforo` é Alto).  
-6) SE (`fluxo_de_carros` é Alto) E (`clima` é Chuvoso) ENTÃO (`tempo_semaforo` é Alto).  
-7) SE `fluxo_de_carros` Baixo E `fluxo_de_pedestres` Baixo E `horario` Outro ENTÃO `tempo_semaforo` Baixo.  
-8) SE `fluxo_de_carros` Baixo E `fluxo_de_pedestres` Alto ENTÃO `tempo_semaforo` Médio.  
-9) SE `fluxo_de_carros` Médio E `horario` Outro ENTÃO `tempo_semaforo` Médio.
-
-- Implementação: regras criadas com `ctrl.Rule` do `skfuzzy`. Para debug existe `avaliar_regras(...)` que calcula graus por `fuzz.interp_membership` e combinações min/max, e imprime apenas regras com grau > 0.01.
+- Implementação: regras criadas com `ctrl.Rule` (skfuzzy). AND = min, OR = max (padrões do framework).
 
 Defuzzificação
 --------------
-- Método: centróide (usado por `ControlSystemSimulation.compute()`).
-- Saída: `tempo_semaforo` em segundos (float) usado pelo `ControladorSemaforo` como referência adicional para iniciar troca.
+- Método: centróide (ControlSystemSimulation.compute()). A saída é um float em segundos: `execucao_simulador.output['tempo_semaforo']`.
 
-Comportamento Integrado
------------------------
-- Decisão híbrida:
-  - Heurística de prioridade (`prioridade_de_computacao`) produz `prioridade` (0–10). Se `prioridade >= 5.0` → força troca.
-  - Caso contrário, se `tempo_verde >= tempo_semaforo` (quando disponível) → inicia troca.
-- Pedestres acionam `requisicao_travessia_pedestre` que inicia sequência amarelo→troca.
-- Mudança manual de ambiente (botão/tecla E) reseta carros/pedestres para testes limpos.
+Exemplo de execução (célula)
+----------------------------
+- Atribuição de entradas (exemplo do notebook):
+```python
+execucao_simulador.input['fluxo_de_carros'] = 2
+execucao_simulador.input['fluxo_de_pedestres'] = 10
+execucao_simulador.input['horario'] = 4
+execucao_simulador.input['clima'] = 5
+execucao_simulador.compute()
+print(execucao_simulador.output['tempo_semaforo'])
+tempo_semaforo.view(sim=execucao_simulador)
+```
+- Observação: `horario` e `clima` foram definidos com universo 0..10 no notebook; valores usados nas entradas devem respeitar esse universo.
 
-Logs e Diagnóstico
-------------------
-- Impressões no terminal:
-  - `[FUZZY-PRIOR]` — componentes da prioridade.
-  - `[FUZZY-TEMPO]` — `tempo_semaforo` calculado e regras ativadas (graus).
-- HUD exibe `clima`, `fluxo_de_carros`, `fluxo_de_pedestres`, `hora`, `tempo_recomendado` e `prioridade`.
+Visualização e Debug
+--------------------
+- `*.view()` (skfuzzy) plota MFs e o estado do sistema quando passado `sim=execucao_simulador`.  
+- Para inspeção manual de graus, `fuzz.interp_membership()` pode ser usado por variável/rotulo.
 
-Execução
---------
-1. Criar/ativar venv e instalar dependências: pygame, scikit-fuzzy, numpy.  
-2. Rodar: `python main.py`
+Notas e observações
+-------------------
+- O notebook adota nomes em português (ex.: `fluxo_de_carros`). Em versões do código fora do notebook, `horario` e `clima` podem ser tratados como variáveis categóricas mapeadas para 0..2 — verifique consistência se integrar com o `main.py`.  
+- Ajustar universos (passo/resolução) melhora suavidade da saída; para maior granularidade use np.arange com passo menor ou np.linspace.
+
+
