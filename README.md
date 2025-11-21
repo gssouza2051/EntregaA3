@@ -74,9 +74,3 @@ Visualização e Debug
 - `*.view()` (skfuzzy) plota MFs e o estado do sistema quando passado `sim=execucao_simulador`.  
 - Para inspeção manual de graus, `fuzz.interp_membership()` pode ser usado por variável/rotulo.
 
-Notas e observações
--------------------
-- O notebook adota nomes em português (ex.: `fluxo_de_carros`). Em versões do código fora do notebook, `horario` e `clima` podem ser tratados como variáveis categóricas mapeadas para 0..2 — verifique consistência se integrar com o `main.py`.  
-- Ajustar universos (passo/resolução) melhora suavidade da saída; para maior granularidade use np.arange com passo menor ou np.linspace.
-
-
